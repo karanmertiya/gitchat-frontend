@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef } from 'react';
-import { GitBranch, GitMerge, Send, Plus, Zap, Loader2, MessageSquare, GitFork, X, Save, Paperclip, DownloadCloud, LogOut, Github, Chrome } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Plus, Zap, Loader2, MessageSquare, GitFork, X, Save, Paperclip, DownloadCloud, LogOut, Github, Globe } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -129,13 +129,11 @@ export default function DialogTreeHome() {
     setLoading(true);
     setForkModal(prev => ({ ...prev, isOpen: false })); 
     try {
-      // FIXED: We now pass the messageId to anchor the new branch in the database
       const data = await api.branch(workspace.id, forkModal.name, forkModal.isEphemeral, forkModal.messageId);
       
       const targetIndex = messages.findIndex(m => m.id === forkModal.messageId);
       const slicedMessages = messages.slice(0, targetIndex + 1);
       
-      // Inject the Anchor Commit directly into the UI state so it updates instantly
       const systemCommit = { role: 'system', content: `🌱 Timeline diverged: #${data.branch.name}`, id: 'anchor' };
       
       setBranches(prev => [...prev, data.branch]);
@@ -235,7 +233,7 @@ export default function DialogTreeHome() {
             {/* Social Logins */}
             <div className="flex gap-3 mb-6">
               <button onClick={() => handleOAuth('google')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all">
-                <Chrome size={16} className="text-zinc-400" /> Google
+                <Globe size={16} className="text-zinc-400" /> Google
               </button>
               <button onClick={() => handleOAuth('github')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all">
                 <Github size={16} className="text-zinc-400" /> GitHub
