@@ -99,7 +99,6 @@ export default function DialogTreeHome() {
     setMessages([]);
   };
 
-  // --- CORE CHAT LOGIC WITH FILE UPLOAD ---
   const handleSend = async () => {
     let finalPrompt = input.trim();
     if (selectedFile) {
@@ -116,7 +115,9 @@ export default function DialogTreeHome() {
     setMessages(prev => [...prev, { role: 'user', content: finalPrompt, id: 'temp' }]);
 
     try {
-      const data = await api.chat(activeBranch.id, finalPrompt, lastMsgId);
+      // ARCHITECTURE UPGRADE: Passing 'messages' array directly to the API
+      const data = await api.chat(activeBranch.id, finalPrompt, lastMsgId, messages);
+      
       if (data.error) throw new Error(data.error);
       setMessages(prev => {
         const filtered = prev.filter(m => m.id !== 'temp');
@@ -139,7 +140,6 @@ export default function DialogTreeHome() {
       const targetIndex = messages.findIndex(m => m.id === forkModal.messageId);
       const slicedMessages = messages.slice(0, targetIndex + 1);
       
-      // FIXED: Uses the real database ID returned from backend instead of 'anchor'
       const systemCommit = { role: 'system', content: `🌱 Timeline diverged: #${data.branch.name}`, id: data.systemMsgId };
       
       setBranches(prev => [...prev, data.branch]);
@@ -174,7 +174,9 @@ export default function DialogTreeHome() {
 
     setLoading(true);
     try {
-      const res = await api.merge(activeBranch.id, mainBranch.id, latestSourceMsgId, null);
+      // ARCHITECTURE UPGRADE: Passing 'messages' array directly to the merge function
+      const res = await api.merge(activeBranch.id, mainBranch.id, latestSourceMsgId, null, messages);
+      
       if(res.error) throw new Error(res.error);
       alert("Branch merged successfully! Jumping back to main timeline.");
       setActiveBranch(mainBranch); 
@@ -199,7 +201,7 @@ export default function DialogTreeHome() {
       setSelectedFile({ name: file.name, content, ext });
     };
     reader.readAsText(file);
-    if(fileInputRef.current) fileInputRef.current.value = ''; // reset input
+    if(fileInputRef.current) fileInputRef.current.value = ''; 
   };
 
   const handleImport = () => {
@@ -281,7 +283,6 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* Sidebar */}
       <aside className="w-64 border-r border-zinc-800 flex flex-col">
         <div className="p-4 flex items-center justify-between mb-2">
           <div className="flex items-center gap-2"><div className="bg-indigo-600 p-1.5 rounded-lg"><GitBranch size={18} className="text-white" /></div><h1 className="font-bold text-md tracking-tight">DialogTree</h1></div>
@@ -309,7 +310,6 @@ export default function DialogTreeHome() {
         </div>
       </aside>
 
-      {/* Main Chat Area */}
       <main className="flex-1 flex flex-col relative min-w-0">
         <header className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-950/80 backdrop-blur-sm z-10">
           <div className="flex items-center gap-3">
@@ -322,7 +322,6 @@ export default function DialogTreeHome() {
           </div>
         </header>
 
-        {/* Dynamic Messages */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth">
           {switching ? (<div className="max-w-2xl mx-auto text-center mt-20 flex flex-col items-center gap-3 text-zinc-500"><Loader2 size={24} className="animate-spin text-indigo-500" /><p className="text-sm">Loading timeline history...</p></div>) : messages.length === 0 ? (<div className="max-w-2xl mx-auto text-center mt-20 flex flex-col items-center gap-4 opacity-50"><MessageSquare size={48} className="text-zinc-700" /><p className="text-zinc-400 text-sm">No messages in this branch yet. Start typing...</p></div>) : (
             messages.map((m, i) => (
@@ -347,7 +346,6 @@ export default function DialogTreeHome() {
           {loading && (<div className="max-w-3xl mx-auto flex gap-3 items-center text-zinc-400 text-sm bg-zinc-900/50 w-max px-4 py-2 rounded-full border border-zinc-800/50"><Loader2 size={16} className="animate-spin text-indigo-500" /> <span>AI is thinking...</span></div>)}
         </div>
 
-        {/* Input Area WITH FILE UPLOAD PILL */}
         <div className="p-6 pt-2 bg-gradient-to-t from-zinc-950 via-zinc-950 to-transparent">
           <div className="max-w-3xl mx-auto relative group flex items-center gap-2">
             <input type="file" ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.md,.js,.ts,.py,.json,.html,.css,.csv" />
@@ -355,8 +353,6 @@ export default function DialogTreeHome() {
               <Paperclip size={20} />
             </button>
             <div className="relative flex-1 flex flex-col justify-end">
-              
-              {/* FILE PILL WIDGET */}
               {selectedFile && (
                  <div className="absolute bottom-full mb-2 left-0 max-w-xs bg-zinc-800 rounded-lg p-2 flex items-center justify-between border border-zinc-700 shadow-md z-20">
                     <div className="flex items-center gap-2 overflow-hidden mr-4">
@@ -366,7 +362,6 @@ export default function DialogTreeHome() {
                     <button onClick={() => setSelectedFile(null)} className="text-zinc-500 hover:text-red-400 p-1 rounded hover:bg-zinc-700"><X size={14}/></button>
                  </div>
               )}
-
               <textarea 
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
