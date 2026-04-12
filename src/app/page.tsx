@@ -58,6 +58,7 @@ export default function DialogTreeHome() {
     
     const setup = async () => {
       try {
+	console.log("🔥 VERCEL IS POINTING TO:", process.env.NEXT_PUBLIC_SUPABASE_URL);
         const urlParams = new URLSearchParams(window.location.search);
         const joinId = urlParams.get('workspace');
 
@@ -83,6 +84,7 @@ export default function DialogTreeHome() {
     };
     setup();
   }, [session]);
+
 
   // LOAD MAIN TIMELINE
   useEffect(() => {
