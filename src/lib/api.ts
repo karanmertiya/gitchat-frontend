@@ -1,12 +1,11 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 
 export const api = {
-  // UPGRADED: Now accepts joinId to link accounts to the same workspace
   init: (userId: string, name: string, joinId?: string | null) => fetch(`${API_BASE}/init`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, workspace_name: name, join_id: joinId }) }).then(res => res.json()),
   
-  chat: (branchId: string, prompt: string, parentId?: string | null, frontendHistory?: any[]) => fetch(`${API_BASE}/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ branch_id: branchId, prompt, parent_message_id: parentId, frontendHistory }) }).then(res => res.json()),
+  // 🔥 UPGRADED: Added the `attachments` parameter
+  chat: (branchId: string, prompt: string, parentId?: string | null, frontendHistory?: any[], attachments?: any[]) => fetch(`${API_BASE}/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ branch_id: branchId, prompt, parent_message_id: parentId, frontendHistory, attachments }) }).then(res => res.json()),
   
-  // UPGRADED: Chitchat now saves to the database
   chitchat: (workspaceId: string, userName: string, prompt: string, history?: any[]) => fetch(`${API_BASE}/chitchat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspace_id: workspaceId, user_name: userName, prompt, history }) }).then(res => res.json()),
   getChitchat: (workspaceId: string) => fetch(`${API_BASE}/chitchat/${workspaceId}`).then(res => res.json()),
   

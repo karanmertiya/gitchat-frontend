@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef } from 'react';
-import { GitBranch, GitMerge, Send, Plus, Zap, Loader2, MessageSquare, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, Download, Trash2, User, MessageCircle, Share2 } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Plus, Zap, Loader2, MessageSquare, GitFork, X, Save, Paperclip, DownloadCloud, LogOut, Code, Globe, File, CheckCircle2, Maximize2, MessageCircle, Share2, Download, Trash2, User, Image as ImageIcon } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -20,7 +20,8 @@ export default function DialogTreeHome() {
 
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState("");
-  const [selectedFiles, setSelectedFiles] = useState<{name: string, content: string, ext: string}[]>([]);
+  // 🔥 UPGRADED: State now tracks the Base64 type for images
+  const [selectedFiles, setSelectedFiles] = useState<{name: string, base64: string, type: string, ext: string}[]>([]);
   const [loading, setLoading] = useState(false);
   const [switching, setSwitching] = useState(false);
   const [workspace, setWorkspace] = useState<any>(null);
@@ -146,19 +147,27 @@ export default function DialogTreeHome() {
   const handleOAuth = async (provider: 'google' | 'github') => { await supabase.auth.signInWithOAuth({ provider }); };
   const handleLogout = async () => { await supabase.auth.signOut(); setWorkspace(null); setActiveBranch(null); setMessages([]); };
 
+  // 🔥 UPGRADED: Now passes the Base64 attachments explicitly to the backend
   const handleSend = async () => {
-    let finalPrompt = input.trim();
-    if (selectedFiles.length > 0) {
-        selectedFiles.forEach(f => { finalPrompt += `\n\n[Attached File: ${f.name}]\n\`\`\`${f.ext}\n${f.content}\n\`\`\``; });
-    }
-    if (!finalPrompt || !activeBranch) return;
-    setInput(""); setSelectedFiles([]); setLoading(true);
+    const finalPrompt = input.trim();
+    if (!finalPrompt && selectedFiles.length === 0) return;
+    if (!activeBranch) return;
+
+    setInput(""); 
+    const currentAttachments = [...selectedFiles];
+    setSelectedFiles([]); 
+    setLoading(true);
 
     const lastMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
-    setMessages(prev => [...prev, { role: 'user', content: finalPrompt, id: 'temp' }]);
+    
+    let displayPrompt = finalPrompt;
+    if (currentAttachments.length > 0) {
+       displayPrompt += `\n\n*(Sent ${currentAttachments.length} attachments)*`;
+    }
+    setMessages(prev => [...prev, { role: 'user', content: displayPrompt, id: 'temp' }]);
 
     try {
-      const data = await api.chat(activeBranch.id, finalPrompt, lastMsgId, messages);
+      const data = await api.chat(activeBranch.id, finalPrompt, lastMsgId, messages, currentAttachments);
       if (data.error) throw new Error(data.error);
     } catch (err: any) {
       setMessages(prev => prev.filter(m => m.id !== 'temp'));
@@ -215,15 +224,31 @@ export default function DialogTreeHome() {
     }
   };
 
+  // 🔥 UPGRADED: Converts files to Base64
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
     const files = Array.from(e.target.files);
-    if (files.some(f => f.size > 1024 * 1024 * 5)) { alert("One of your files is too large. Keep under 5MB."); return; }
-    const newFiles = await Promise.all(files.map(async file => {
-      const text = await file.text(); 
-      return { name: file.name, content: text, ext: file.name.split('.').pop() || 'txt' };
+    
+    if (files.some(f => f.size > 1024 * 1024 * 10)) { 
+      alert("One of your files is too large. Keep under 10MB per file."); return; 
+    }
+
+    const newFiles = await Promise.all(files.map(file => {
+      return new Promise<{name: string, base64: string, type: string, ext: string}>((resolve) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+          resolve({ 
+            name: file.name, 
+            base64: reader.result as string, 
+            type: file.type,
+            ext: file.name.split('.').pop() || 'txt' 
+          });
+        };
+        reader.readAsDataURL(file);
+      });
     }));
-    setSelectedFiles(prev => [...prev, ...newFiles]);
+
+    setSelectedFiles(prev => [...prev, ...newFiles as any]);
     if(fileInputRef.current) fileInputRef.current.value = ''; 
   };
 
@@ -483,20 +508,33 @@ export default function DialogTreeHome() {
 
         <div className="p-6 pt-2 shrink-0">
           <div className="max-w-4xl mx-auto relative group flex items-end gap-3 bg-zinc-900 border border-zinc-800 rounded-3xl p-2 shadow-xl focus-within:border-indigo-500/50 focus-within:ring-1 focus-within:ring-indigo-500/50 transition-all">
-            <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.md,.js,.ts,.py,.json,.html,.css,.csv,.pdf" />
+            
+            {/* 🔥 UPGRADED: Added image/* to accepted files */}
+            <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.md,.js,.ts,.py,.json,.html,.css,.csv,.pdf,image/*" />
+            
             <button onClick={() => fileInputRef.current?.click()} className="p-3.5 bg-zinc-800/50 rounded-2xl text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800 transition-all mb-1"><Paperclip size={20} /></button>
             <div className="relative flex-1 flex flex-col justify-end min-w-0">
+              
+              {/* 🔥 UPGRADED: Image Thumbnails vs File Pills */}
               {selectedFiles.length > 0 && (
                  <div className="flex flex-wrap gap-2 mb-3">
                     {selectedFiles.map((file, idx) => (
-                      <div key={idx} className="bg-zinc-800 rounded-lg py-1.5 px-3 flex items-center gap-2 border border-zinc-700 shadow-md">
-                        <File size={14} className="text-indigo-400 shrink-0" />
-                        <span className="text-xs text-zinc-300 max-w-[120px] truncate">{file.name}</span>
-                        <button onClick={() => setSelectedFiles(prev => prev.filter((_, i) => i !== idx))} className="text-zinc-500 hover:text-red-400"><X size={14}/></button>
-                      </div>
+                      file.type.startsWith('image/') ? (
+                        <div key={idx} className="relative w-16 h-16 rounded-lg overflow-hidden border border-zinc-700 shadow-md group">
+                           <img src={file.base64} alt="preview" className="w-full h-full object-cover" />
+                           <button onClick={() => setSelectedFiles(prev => prev.filter((_, i) => i !== idx))} className="absolute top-1 right-1 bg-black/60 text-zinc-300 hover:text-red-400 p-0.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={12}/></button>
+                        </div>
+                      ) : (
+                        <div key={idx} className="bg-zinc-800 rounded-lg py-1.5 px-3 flex items-center gap-2 border border-zinc-700 shadow-md">
+                          <File size={14} className="text-indigo-400 shrink-0" />
+                          <span className="text-xs text-zinc-300 max-w-[120px] truncate">{file.name}</span>
+                          <button onClick={() => setSelectedFiles(prev => prev.filter((_, i) => i !== idx))} className="text-zinc-500 hover:text-red-400"><X size={14}/></button>
+                        </div>
+                      )
                     ))}
                  </div>
               )}
+              
               <textarea 
                 value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }} disabled={switching || !activeBranch} placeholder={`Message #${activeBranch?.name || '...'}`} className="w-full bg-transparent border-none py-3 px-2 focus:outline-none focus:ring-0 text-[15px] resize-none overflow-y-auto" style={{ minHeight: '50px', maxHeight: '200px', height: input ? 'auto' : '50px' }}
               />
