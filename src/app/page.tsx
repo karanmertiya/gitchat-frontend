@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, MessageCircle, Share2, Download, Trash2, User, Library } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, Maximize2, MessageCircle, Share2, Download, Trash2, User, Library } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -28,7 +28,7 @@ export default function DialogTreeHome() {
   const [branches, setBranches] = useState<any[]>([]);
 
   const [activeArtifact, setActiveArtifact] = useState<{code: string, lang: string} | null>(null);
-  const [isArtifactSidebarOpen, setIsArtifactSidebarOpen] = useState(false); // 🔥 NEW: Artifact Library State
+  const [isArtifactSidebarOpen, setIsArtifactSidebarOpen] = useState(false);
   
   const [isChitchatOpen, setIsChitchatOpen] = useState(false);
   const [chitchatInput, setChitchatInput] = useState("");
@@ -312,7 +312,6 @@ export default function DialogTreeHome() {
     return depth;
   };
 
-  // 🔥 NEW: Compile all code artifacts from the current timeline
   const extractAllArtifacts = () => {
     const allArtifacts: { code: string, lang: string, msgIndex: number }[] = [];
     messages.forEach((m, idx) => {
@@ -492,7 +491,6 @@ export default function DialogTreeHome() {
              <code className="bg-zinc-900 px-3 py-1 rounded-md text-xs text-indigo-300 border border-zinc-700 flex items-center gap-2">{activeBranch?.is_ephemeral && <Zap size={12} className="text-amber-400"/>}{activeBranch?.name || 'loading...'}</code>
           </div>
           <div className="flex items-center gap-3">
-            {/* 🔥 NEW: Artifact Sidebar Toggle */}
             <button onClick={() => setIsArtifactSidebarOpen(!isArtifactSidebarOpen)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-medium ${isArtifactSidebarOpen || timelineArtifacts.length > 0 ? 'border-indigo-600/50 bg-indigo-900/20 text-indigo-300 hover:bg-indigo-900/40' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
                <Library size={14} /> Artifacts ({timelineArtifacts.length})
             </button>
@@ -566,7 +564,6 @@ export default function DialogTreeHome() {
         </div>
       </main>
 
-      {/* 🔥 NEW: The Artifact Library Sidebar */}
       {isArtifactSidebarOpen && (
          <aside className="w-64 border-l border-zinc-800 bg-zinc-950/90 backdrop-blur-md flex flex-col shadow-2xl z-20">
             <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-4 bg-zinc-900/50">
@@ -598,7 +595,6 @@ export default function DialogTreeHome() {
          </aside>
       )}
 
-      {/* The Main Artifact Viewer Panel (Splits screen when active) */}
       {activeArtifact && (
         <aside className="w-[45%] min-w-[400px] border-l border-zinc-800 bg-zinc-950 flex flex-col shadow-2xl z-30 absolute right-0 top-0 bottom-0">
             <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900">
