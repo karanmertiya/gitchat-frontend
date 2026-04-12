@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef } from 'react';
-import { GitBranch, GitMerge, Send, Plus, Zap, Loader2, MessageSquare, GitFork, X, Save, Paperclip, DownloadCloud, LogOut, Code, Globe, File, CheckCircle2, Maximize2, MessageCircle, Share2, Download, Trash2 } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Plus, Zap, Loader2, MessageSquare, GitFork, X, Save, Paperclip, DownloadCloud, LogOut, Code, Globe, File, CheckCircle2, Maximize2, MessageCircle, Share2, Download, Trash2, User } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -8,6 +8,9 @@ import { supabase } from '@/lib/supabase';
 
 export default function DialogTreeHome() {
   const [session, setSession] = useState<any>(null);
+  
+  // Auth State
+  const [authName, setAuthName] = useState(''); // NEW: Name State
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
@@ -76,16 +79,23 @@ export default function DialogTreeHome() {
     loadHistory();
   }, [activeBranch]);
 
+  // --- UPGRADED AUTH LOGIC (WITH NAME SUPPORT) ---
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthLoading(true); setAuthError(''); setVerifyMessage('');
     try {
       if (isSignUp) {
-        const { data, error } = await supabase.auth.signUp({ email: authEmail, password: authPassword });
+        // Pass the name securely into Supabase's user metadata
+        const { data, error } = await supabase.auth.signUp({ 
+            email: authEmail, 
+            password: authPassword,
+            options: { data: { full_name: authName } }
+        });
         if (error) throw error;
+        
         if (data.user && !data.session) {
             setVerifyMessage('Registration successful! Please check your email to verify your account.');
-            setAuthEmail(''); setAuthPassword(''); setIsSignUp(false);
+            setAuthEmail(''); setAuthPassword(''); setAuthName(''); setIsSignUp(false);
         } else {
             setVerifyMessage('Account created successfully!');
         }
@@ -200,10 +210,8 @@ export default function DialogTreeHome() {
       const res = await api.merge(activeBranch.id, mainBranch.id, latestSourceMsgId, null, messages);
       if(res.error) throw new Error(res.error);
       
-      // Auto-delete the branch after squash-merging to keep things clean!
       await api.deleteBranch(activeBranch.id);
       setBranches(prev => prev.filter(b => b.id !== activeBranch.id));
-
       alert("Branch successfully Squashed & Merged!");
       setActiveBranch(mainBranch); 
     } catch(e: any) {
@@ -285,7 +293,6 @@ export default function DialogTreeHome() {
     }
   };
 
-  // Helper function to calculate indentation depth based on parent branches
   const getBranchDepth = (branch: any) => {
     let depth = 0;
     let curr = branch;
@@ -297,7 +304,7 @@ export default function DialogTreeHome() {
   };
 
   // ==========================================
-  // RENDER: LOGIN
+  // RENDER: LOGIN (WITH NAME FIELD)
   // ==========================================
   if (!session) {
     return (
@@ -330,6 +337,15 @@ export default function DialogTreeHome() {
               <form onSubmit={handleEmailAuth} className="space-y-4">
                 {authError && <div className="bg-red-500/10 border border-red-500/50 text-red-400 text-sm p-3 rounded-lg">{authError}</div>}
                 {verifyMessage && <div className="bg-emerald-500/10 border border-emerald-500/50 text-emerald-400 text-sm p-3 rounded-lg flex items-start gap-2"><CheckCircle2 size={18} className="shrink-0 mt-0.5" /><p>{verifyMessage}</p></div>}
+                
+                {/* Conditionally render the Name field only on Signup */}
+                {isSignUp && (
+                  <div>
+                    <label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Full Name</label>
+                    <input type="text" value={authName} onChange={e => setAuthName(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500" placeholder="Jane Doe" />
+                  </div>
+                )}
+                
                 <div><label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Email</label><input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500" placeholder="engineer@example.com" /></div>
                 <div><label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Password</label><input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500" placeholder="••••••••" /></div>
                 <button type="submit" disabled={authLoading} className="w-full bg-white hover:bg-zinc-200 text-zinc-950 font-semibold py-3 rounded-xl transition-all disabled:opacity-50 flex justify-center items-center gap-2 mt-4">{authLoading ? <Loader2 size={18} className="animate-spin text-zinc-500" /> : null}{isSignUp ? 'Create Account' : 'Sign In'}</button>
@@ -347,7 +363,7 @@ export default function DialogTreeHome() {
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans relative overflow-hidden">
       
-      {/* FLOATING META-CHAT (Chitchat) */}
+      {/* FLOATING META-CHAT */}
       <div className="absolute bottom-6 right-6 z-50">
          {isChitchatOpen ? (
             <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-80 shadow-2xl flex flex-col h-[450px] overflow-hidden">
@@ -361,8 +377,11 @@ export default function DialogTreeHome() {
                   </div>
                   {chitchatMsgs.map((m, i) => (
                       <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                          <div className={`p-2.5 rounded-xl max-w-[85%] text-[13px] ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-zinc-800 border border-zinc-700 text-zinc-200 rounded-bl-sm'}`}>
-                             <ReactMarkdown className="prose prose-invert prose-p:leading-snug max-w-none">{m.content}</ReactMarkdown>
+                          <div className={`p-2.5 rounded-xl max-w-[85%] ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-zinc-800 border border-zinc-700 text-zinc-200 rounded-bl-sm'}`}>
+                             {/* FIXED REACT MARKDOWN CRASH HERE */}
+                             <div className="prose prose-invert prose-p:leading-snug max-w-none text-[13px]">
+                                <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
+                             </div>
                           </div>
                       </div>
                   ))}
@@ -386,7 +405,7 @@ export default function DialogTreeHome() {
             <div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold flex items-center gap-2"><GitFork size={20} className="text-indigo-400"/> Diverge Timeline</h2><button onClick={() => setForkModal(prev => ({ ...prev, isOpen: false }))} className="text-zinc-500 hover:text-zinc-300"><X size={20}/></button></div>
             <input type="text" autoFocus placeholder="Name this timeline..." value={forkModal.name} onChange={e => setForkModal(prev => ({ ...prev, name: e.target.value }))} onKeyDown={e => e.key === 'Enter' && submitFork()} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-zinc-100 mb-4 focus:outline-none focus:border-indigo-500" />
             <div className="flex items-center gap-3 mb-6 bg-zinc-950/50 p-3 rounded-lg border border-zinc-800">
-              <input type="checkbox" id="ephemeral" checked={forkModal.isEphemeral} onChange={e => setForkModal(prev => ({ ...prev, isEphemeral: e.target.checked }))} className="w-4 h-4 rounded bg-zinc-900 border-zinc-700 text-indigo-600 focus:ring-indigo-600" />
+              <input type="checkbox" id="ephemeral" checked={forkModal.isEphemeral} onChange={e => setForkModal(prev => ({ ...prev, isEphemeral: e.target.checked }))} className="w-4 h-4 rounded bg-zinc-900 border-zinc-700 text-indigo-600" />
               <label htmlFor="ephemeral" className="text-sm text-zinc-300 flex items-center gap-2 cursor-pointer"><Zap size={14} className={forkModal.isEphemeral ? "text-amber-400" : "text-zinc-600"}/> Temporary Workspace</label>
             </div>
             <div className="flex justify-end gap-3"><button onClick={() => setForkModal(prev => ({ ...prev, isOpen: false }))} className="px-4 py-2 text-sm text-zinc-400">Cancel</button><button onClick={submitFork} disabled={!forkModal.name.trim()} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">Create Branch</button></div>
@@ -394,18 +413,29 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* Sidebar with Git Indentation & Deletion */}
+      {/* Sidebar */}
       <aside className="w-72 border-r border-zinc-800 flex flex-col bg-zinc-950/50 z-10">
         <div className="p-4 flex items-center justify-between mb-2">
           <div className="flex items-center gap-2"><div className="bg-indigo-600 p-1.5 rounded-lg"><GitBranch size={18} className="text-white" /></div><h1 className="font-bold text-md tracking-tight">DialogTree</h1></div>
           <button onClick={copyShareLink} className="text-zinc-500 hover:text-indigo-400 transition-colors" title="Invite Collaborators"><Share2 size={16} /></button>
         </div>
+        
+        {/* UPGRADED: User Badge now prominently shows Name */}
         <div className="px-4 mb-4">
-          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-2.5 flex items-center justify-between">
-            <div className="truncate text-xs text-zinc-400">{session.user.email}</div>
-            <button onClick={handleLogout} className="text-zinc-500 hover:text-red-400 transition-colors"><LogOut size={14} /></button>
+          <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 flex items-center justify-between">
+            <div className="flex items-center gap-3 overflow-hidden">
+                <div className="bg-zinc-800 p-1.5 rounded-md"><User size={16} className="text-indigo-400"/></div>
+                <div className="min-w-0">
+                    <div className="truncate text-sm font-medium text-zinc-300">
+                        {session.user.user_metadata?.full_name || session.user.email.split('@')[0]}
+                    </div>
+                    <div className="truncate text-xs text-zinc-500">{session.user.email}</div>
+                </div>
+            </div>
+            <button onClick={handleLogout} className="text-zinc-500 hover:text-red-400 transition-colors shrink-0 ml-2"><LogOut size={16} /></button>
           </div>
         </div>
+
         <nav className="flex-1 px-3 overflow-y-auto">
           <div className="text-xs font-semibold text-zinc-500 mb-3 px-2 uppercase tracking-wider">Timelines</div>
           {branches.length === 0 ? (<div className="px-2 text-zinc-600 text-sm italic">Loading branches...</div>) : (
@@ -497,7 +527,7 @@ export default function DialogTreeHome() {
         </div>
       </main>
 
-      {/* RIGHT PANEL: CLAUDE-STYLE ARTIFACT VIEWER WITH DOWNLOAD */}
+      {/* RIGHT PANEL: CLAUDE-STYLE ARTIFACT VIEWER */}
       {activeArtifact && (
         <aside className="w-[45%] min-w-[400px] border-l border-zinc-800 bg-zinc-950 flex flex-col shadow-2xl z-20">
             <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900">
@@ -517,7 +547,6 @@ export default function DialogTreeHome() {
             </div>
         </aside>
       )}
-
     </div>
   );
 }
