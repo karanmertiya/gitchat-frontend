@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, MessageCircle, Share2, Download, Trash2, User } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, MessageCircle, Share2, Download, Trash2, User, Library } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -28,6 +28,8 @@ export default function DialogTreeHome() {
   const [branches, setBranches] = useState<any[]>([]);
 
   const [activeArtifact, setActiveArtifact] = useState<{code: string, lang: string} | null>(null);
+  const [isArtifactSidebarOpen, setIsArtifactSidebarOpen] = useState(false); // 🔥 NEW: Artifact Library State
+  
   const [isChitchatOpen, setIsChitchatOpen] = useState(false);
   const [chitchatInput, setChitchatInput] = useState("");
   const [chitchatMsgs, setChitchatMsgs] = useState<any[]>([]);
@@ -249,12 +251,11 @@ export default function DialogTreeHome() {
     if(fileInputRef.current) fileInputRef.current.value = ''; 
   };
 
-  const downloadCode = () => {
-    if (!activeArtifact) return;
-    const blob = new Blob([activeArtifact.code], { type: 'text/plain' });
+  const downloadCode = (codeToDownload: string, ext: string) => {
+    const blob = new Blob([codeToDownload], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url; a.download = `artifact.${activeArtifact.lang}`;
+    a.href = url; a.download = `artifact.${ext}`;
     document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
   };
 
@@ -310,6 +311,23 @@ export default function DialogTreeHome() {
     }
     return depth;
   };
+
+  // 🔥 NEW: Compile all code artifacts from the current timeline
+  const extractAllArtifacts = () => {
+    const allArtifacts: { code: string, lang: string, msgIndex: number }[] = [];
+    messages.forEach((m, idx) => {
+       if (m.role === 'ai' || m.role === 'system') {
+          const regex = /```(\w+)\n([\s\S]*?)```/g;
+          let match;
+          while ((match = regex.exec(m.content)) !== null) {
+             allArtifacts.push({ lang: match[1], code: match[2].trim(), msgIndex: idx });
+          }
+       }
+    });
+    return allArtifacts;
+  };
+
+  const timelineArtifacts = extractAllArtifacts();
 
   if (isInitializing) {
      return (
@@ -474,6 +492,11 @@ export default function DialogTreeHome() {
              <code className="bg-zinc-900 px-3 py-1 rounded-md text-xs text-indigo-300 border border-zinc-700 flex items-center gap-2">{activeBranch?.is_ephemeral && <Zap size={12} className="text-amber-400"/>}{activeBranch?.name || 'loading...'}</code>
           </div>
           <div className="flex items-center gap-3">
+            {/* 🔥 NEW: Artifact Sidebar Toggle */}
+            <button onClick={() => setIsArtifactSidebarOpen(!isArtifactSidebarOpen)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-medium ${isArtifactSidebarOpen || timelineArtifacts.length > 0 ? 'border-indigo-600/50 bg-indigo-900/20 text-indigo-300 hover:bg-indigo-900/40' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
+               <Library size={14} /> Artifacts ({timelineArtifacts.length})
+            </button>
+
             {activeBranch?.is_ephemeral && (<button onClick={makePermanent} className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-amber-900/30 border border-amber-700 hover:bg-amber-900/50 text-amber-300 text-xs font-medium transition-all"><Save size={14} /> Make Permanent</button>)}
             <button onClick={handleMerge} className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-zinc-700 hover:bg-zinc-900 text-xs font-medium transition-all text-zinc-300"><GitMerge size={14} /> Merge Request</button>
           </div>
@@ -483,7 +506,6 @@ export default function DialogTreeHome() {
           {switching ? (<div className="flex justify-center mt-20"><Loader2 size={24} className="animate-spin text-indigo-500" /></div>) : messages.length === 0 ? (<div className="text-center mt-20 text-zinc-500">Start typing...</div>) : (
             messages.map((m, i) => {
               
-              // 🔥 THE INVISIBLE ATTACHMENT FILTER
               const displayContent = m.content.replace(/---START_ATTACHMENT:(.*?)---[\s\S]*?---END_ATTACHMENT---/g, '\n\n📎 **Attached Document:** `$1`');
 
               return (
@@ -544,16 +566,49 @@ export default function DialogTreeHome() {
         </div>
       </main>
 
+      {/* 🔥 NEW: The Artifact Library Sidebar */}
+      {isArtifactSidebarOpen && (
+         <aside className="w-64 border-l border-zinc-800 bg-zinc-950/90 backdrop-blur-md flex flex-col shadow-2xl z-20">
+            <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-4 bg-zinc-900/50">
+               <div className="flex items-center gap-2 text-zinc-200 font-semibold text-sm">
+                  <Library size={16} className="text-indigo-400" /> Artifact Library
+               </div>
+               <button onClick={() => setIsArtifactSidebarOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={16}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+               {timelineArtifacts.length === 0 ? (
+                  <div className="text-xs text-zinc-600 text-center mt-10 italic">No code generated in this timeline yet.</div>
+               ) : (
+                  timelineArtifacts.map((art, idx) => (
+                     <div key={idx} className="bg-zinc-900 border border-zinc-800 rounded-xl p-3 hover:border-indigo-500/50 transition-colors group">
+                        <div className="flex items-center justify-between mb-2">
+                           <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 bg-zinc-950 px-2 py-0.5 rounded">{art.lang}</span>
+                           <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={() => setActiveArtifact({ code: art.code, lang: art.lang })} className="text-indigo-400 hover:text-indigo-300 text-xs flex items-center gap-1"><Maximize2 size={12}/> View</button>
+                              <button onClick={() => downloadCode(art.code, art.lang)} className="text-zinc-400 hover:text-zinc-200 text-xs"><Download size={12}/></button>
+                           </div>
+                        </div>
+                        <div className="text-xs text-zinc-400 line-clamp-3 font-mono bg-zinc-950 p-2 rounded border border-zinc-800/50">
+                           {art.code}
+                        </div>
+                     </div>
+                  ))
+               )}
+            </div>
+         </aside>
+      )}
+
+      {/* The Main Artifact Viewer Panel (Splits screen when active) */}
       {activeArtifact && (
-        <aside className="w-[45%] min-w-[400px] border-l border-zinc-800 bg-zinc-950 flex flex-col shadow-2xl z-20">
+        <aside className="w-[45%] min-w-[400px] border-l border-zinc-800 bg-zinc-950 flex flex-col shadow-2xl z-30 absolute right-0 top-0 bottom-0">
             <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900">
                 <div className="flex items-center gap-2">
                     <Code size={18} className="text-indigo-400"/>
-                    <span className="text-sm font-semibold text-zinc-200">Code Artifact</span>
+                    <span className="text-sm font-semibold text-zinc-200">Code Viewer</span>
                     <span className="ml-2 text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded uppercase tracking-wider">{activeArtifact.lang}</span>
                 </div>
                 <div className="flex gap-2">
-                    <button onClick={downloadCode} className="flex items-center gap-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors"><Download size={14}/> Download</button>
+                    <button onClick={() => downloadCode(activeArtifact.code, activeArtifact.lang)} className="flex items-center gap-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors"><Download size={14}/> Download</button>
                     <button onClick={() => navigator.clipboard.writeText(activeArtifact.code)} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors">Copy</button>
                     <button onClick={() => setActiveArtifact(null)} className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-zinc-800 transition-colors"><X size={18}/></button>
                 </div>
