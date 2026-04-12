@@ -49,6 +49,9 @@ export default function DialogTreeHome() {
     if (!session?.user?.id) return;
     const setup = async () => {
       try {
+	console.log("🛠️ VERCEL SUPABASE URL:", process.env.NEXT_PUBLIC_SUPABASE_URL);
+        console.log("🛠️ VERCEL API URL:", process.env.NEXT_PUBLIC_API_URL);
+        console.log("🛠️ USER ID:", session.user.id);
         // Read the URL. Did a friend send us a link?
         const urlParams = new URLSearchParams(window.location.search);
         const joinId = urlParams.get('workspace');
