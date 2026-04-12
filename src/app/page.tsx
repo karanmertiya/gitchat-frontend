@@ -49,21 +49,26 @@ export default function DialogTreeHome() {
     if (!session?.user?.id) return;
     const setup = async () => {
       try {
-	console.log("🛠️ VERCEL SUPABASE URL:", process.env.NEXT_PUBLIC_SUPABASE_URL);
-        console.log("🛠️ VERCEL API URL:", process.env.NEXT_PUBLIC_API_URL);
-        console.log("🛠️ USER ID:", session.user.id);
-        // Read the URL. Did a friend send us a link?
         const urlParams = new URLSearchParams(window.location.search);
         const joinId = urlParams.get('workspace');
 
         const data = await api.init(session.user.id, "My First Workspace", joinId);
+        
+        // 🚨 THE ESCAPE HATCH: If the backend fails, nuke the session and go to login
+        if (data.error) {
+            console.error("Backend refused connection:", data.error);
+            await supabase.auth.signOut();
+            setSession(null);
+            return;
+        }
+
         if (!data.workspace) return;
         setWorkspace(data.workspace);
         setActiveBranch(data.branch);
         const branchData = await api.getBranches(data.workspace.id);
         setBranches(branchData.branches);
       } catch (err) {
-        console.error("Setup failed:", err);
+        console.error("Setup completely failed:", err);
       }
     };
     setup();
