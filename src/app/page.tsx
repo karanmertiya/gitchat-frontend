@@ -1,13 +1,12 @@
 "use client";
 import React, { useState, useEffect, useRef } from 'react';
-import { GitBranch, GitMerge, Send, Plus, Zap, Loader2, MessageSquare, GitFork, X, Save, Paperclip, DownloadCloud, LogOut, Code, Globe, File, CheckCircle2, Maximize2, MessageCircle } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Plus, Zap, Loader2, MessageSquare, GitFork, X, Save, Paperclip, DownloadCloud, LogOut, Code, Globe, File, CheckCircle2, Maximize2, MessageCircle, Share2, Download, Trash2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 
 export default function DialogTreeHome() {
-  // --- AUTH STATE ---
   const [session, setSession] = useState<any>(null);
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
@@ -16,7 +15,6 @@ export default function DialogTreeHome() {
   const [authError, setAuthError] = useState('');
   const [verifyMessage, setVerifyMessage] = useState('');
 
-  // --- CORE STATE ---
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<{name: string, content: string, ext: string}[]>([]);
@@ -26,12 +24,12 @@ export default function DialogTreeHome() {
   const [activeBranch, setActiveBranch] = useState<any>(null);
   const [branches, setBranches] = useState<any[]>([]);
 
-  // --- UI UPGRADES (Artifacts & Chitchat) ---
   const [activeArtifact, setActiveArtifact] = useState<{code: string, lang: string} | null>(null);
   const [isChitchatOpen, setIsChitchatOpen] = useState(false);
   const [chitchatInput, setChitchatInput] = useState("");
+  const [chitchatMsgs, setChitchatMsgs] = useState<any[]>([]);
+  const [chitchatLoading, setChitchatLoading] = useState(false);
 
-  // Modals
   const [forkModal, setForkModal] = useState({ isOpen: false, messageId: null as string | null, name: "", isEphemeral: true });
   const [importModal, setImportModal] = useState(false);
   const [importUrl, setImportUrl] = useState("");
@@ -65,7 +63,7 @@ export default function DialogTreeHome() {
     const loadHistory = async () => {
       if (!activeBranch) return;
       setSwitching(true);
-      setActiveArtifact(null); // Close artifact panel on switch
+      setActiveArtifact(null); 
       try {
         const historyData = await api.getMessages(activeBranch.id);
         setMessages(historyData.messages || []);
@@ -80,15 +78,13 @@ export default function DialogTreeHome() {
 
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
-    setAuthLoading(true);
-    setAuthError('');
-    setVerifyMessage('');
+    setAuthLoading(true); setAuthError(''); setVerifyMessage('');
     try {
       if (isSignUp) {
         const { data, error } = await supabase.auth.signUp({ email: authEmail, password: authPassword });
         if (error) throw error;
         if (data.user && !data.session) {
-            setVerifyMessage('Registration successful! Please check your email to verify your account before logging in.');
+            setVerifyMessage('Registration successful! Please check your email to verify your account.');
             setAuthEmail(''); setAuthPassword(''); setIsSignUp(false);
         } else {
             setVerifyMessage('Account created successfully!');
@@ -96,7 +92,7 @@ export default function DialogTreeHome() {
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
         if (error) {
-            if (error.message.includes("Email not confirmed")) throw new Error("Please check your email and click the verification link before logging in.");
+            if (error.message.includes("Email not confirmed")) throw new Error("Please check your email and click the verification link.");
             throw error;
         }
       }
@@ -118,8 +114,6 @@ export default function DialogTreeHome() {
 
   const handleSend = async () => {
     let finalPrompt = input.trim();
-    
-    // Append all selected files
     if (selectedFiles.length > 0) {
         selectedFiles.forEach(f => {
             finalPrompt += `\n\n[Attached File: ${f.name}]\n\`\`\`${f.ext}\n${f.content}\n\`\`\``;
@@ -127,10 +121,7 @@ export default function DialogTreeHome() {
     }
 
     if (!finalPrompt || !activeBranch) return;
-
-    setInput("");
-    setSelectedFiles([]);
-    setLoading(true);
+    setInput(""); setSelectedFiles([]); setLoading(true);
 
     const lastMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
     setMessages(prev => [...prev, { role: 'user', content: finalPrompt, id: 'temp' }]);
@@ -155,7 +146,7 @@ export default function DialogTreeHome() {
     setLoading(true);
     setForkModal(prev => ({ ...prev, isOpen: false })); 
     try {
-      const data = await api.branch(workspace.id, forkModal.name, forkModal.isEphemeral, forkModal.messageId);
+      const data = await api.branch(workspace.id, forkModal.name, forkModal.isEphemeral, forkModal.messageId, activeBranch.id);
       const targetIndex = messages.findIndex(m => m.id === forkModal.messageId);
       const slicedMessages = messages.slice(0, targetIndex + 1);
       const systemCommit = { role: 'system', content: `🌱 Timeline diverged: #${data.branch.name}`, id: data.systemMsgId };
@@ -167,6 +158,21 @@ export default function DialogTreeHome() {
       alert("Failed to create new timeline.");
     } finally {
       setLoading(false);
+    }
+  };
+
+  const deleteBranch = async (branchId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!window.confirm("Are you sure you want to permanently delete this branch?")) return;
+    try {
+      await api.deleteBranch(branchId);
+      setBranches(prev => prev.filter(b => b.id !== branchId));
+      if (activeBranch?.id === branchId) {
+        const main = branches.find(b => b.name === 'main');
+        setActiveBranch(main || null);
+      }
+    } catch (err) {
+      console.error("Failed to delete", err);
     }
   };
 
@@ -193,6 +199,12 @@ export default function DialogTreeHome() {
     try {
       const res = await api.merge(activeBranch.id, mainBranch.id, latestSourceMsgId, null, messages);
       if(res.error) throw new Error(res.error);
+      
+      // Auto-delete the branch after squash-merging to keep things clean!
+      await api.deleteBranch(activeBranch.id);
+      setBranches(prev => prev.filter(b => b.id !== activeBranch.id));
+
+      alert("Branch successfully Squashed & Merged!");
       setActiveBranch(mainBranch); 
     } catch(e: any) {
       alert(`Merge failed: ${e.message}`);
@@ -201,54 +213,91 @@ export default function DialogTreeHome() {
     }
   };
 
-  // UPGRADE: Multiple Files & Basic Text Extraction
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
     const files = Array.from(e.target.files);
-    
-    // Check sizes
     if (files.some(f => f.size > 1024 * 1024 * 5)) { 
       alert("One of your files is too large. Keep under 5MB."); return;
     }
-
     const newFiles = await Promise.all(files.map(async file => {
-      // For PDFs we just read raw text for now (will look like gibberish unless backend parses it, but allows upload)
       const text = await file.text(); 
       return { name: file.name, content: text, ext: file.name.split('.').pop() || 'txt' };
     }));
-
     setSelectedFiles(prev => [...prev, ...newFiles]);
     if(fileInputRef.current) fileInputRef.current.value = ''; 
   };
 
-  // Custom Markdown Components for Artifacts Generation
+  const downloadCode = () => {
+    if (!activeArtifact) return;
+    const blob = new Blob([activeArtifact.code], { type: 'text/plain' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `artifact.${activeArtifact.lang}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
+  const handleChitchatSend = async () => {
+    if (!chitchatInput.trim()) return;
+    const msg = chitchatInput;
+    setChitchatInput("");
+    setChitchatMsgs(prev => [...prev, { role: 'user', content: msg }]);
+
+    if (msg.includes('@gemini')) {
+        setChitchatLoading(true);
+        try {
+            const aiHistory = chitchatMsgs.map(m => ({ role: m.role === 'ai' ? 'model' : 'user', parts: [{ text: m.content }]}));
+            const res = await api.chitchat(msg, aiHistory);
+            setChitchatMsgs(prev => [...prev, { role: 'ai', content: res.response }]);
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setChitchatLoading(false);
+        }
+    }
+  };
+
+  const copyShareLink = () => {
+    if (workspace?.id) {
+        const url = `${window.location.origin}?workspace=${workspace.id}`;
+        navigator.clipboard.writeText(url);
+        alert("Invite link copied to clipboard!");
+    }
+  };
+
   const MarkdownComponents = {
     code({node, inline, className, children, ...props}: any) {
       const match = /language-(\w+)/.exec(className || '');
       const codeString = String(children).replace(/\n$/, '');
-      
       return !inline && match ? (
         <div className="relative group mt-4 mb-4">
           <div className="absolute top-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-            <button 
-                onClick={() => setActiveArtifact({ code: codeString, lang: match[1] })}
-                className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded-lg shadow-lg transition-all"
-            >
-                <Maximize2 size={14}/> View Code
+            <button onClick={() => setActiveArtifact({ code: codeString, lang: match[1] })} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded-lg shadow-lg transition-all">
+                <Code size={14}/> Open in Editor
             </button>
           </div>
-          <pre className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 overflow-x-auto text-[13px] leading-relaxed">
-            <code className={className} {...props}>{children}</code>
-          </pre>
+          <pre className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 overflow-x-auto text-[13px] leading-relaxed"><code className={className} {...props}>{children}</code></pre>
         </div>
-      ) : (
-        <code className="bg-zinc-800 text-indigo-300 px-1.5 py-0.5 rounded-md text-[13px]" {...props}>{children}</code>
-      )
+      ) : (<code className="bg-zinc-800 text-indigo-300 px-1.5 py-0.5 rounded-md text-[13px]" {...props}>{children}</code>)
     }
   };
 
+  // Helper function to calculate indentation depth based on parent branches
+  const getBranchDepth = (branch: any) => {
+    let depth = 0;
+    let curr = branch;
+    while (curr.parent_branch_id) {
+        depth++;
+        curr = branches.find(b => b.id === curr.parent_branch_id) || {};
+    }
+    return depth;
+  };
+
   // ==========================================
-  // RENDER: LOGIN (Same as before)
+  // RENDER: LOGIN
   // ==========================================
   if (!session) {
     return (
@@ -298,21 +347,30 @@ export default function DialogTreeHome() {
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans relative overflow-hidden">
       
-      {/* Floating Meta-Chat (Chitchat) Button */}
+      {/* FLOATING META-CHAT (Chitchat) */}
       <div className="absolute bottom-6 right-6 z-50">
          {isChitchatOpen ? (
-            <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-80 shadow-2xl flex flex-col h-96 overflow-hidden">
+            <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-80 shadow-2xl flex flex-col h-[450px] overflow-hidden">
                <div className="p-3 border-b border-zinc-800 flex justify-between items-center bg-zinc-950">
-                  <span className="text-sm font-semibold text-zinc-300 flex items-center gap-2"><MessageCircle size={16} className="text-indigo-400"/> Chitchat</span>
+                  <span className="text-sm font-semibold text-zinc-300 flex items-center gap-2"><MessageCircle size={16} className="text-indigo-400"/> General Chitchat</span>
                   <button onClick={() => setIsChitchatOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={16}/></button>
                </div>
                <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3">
-                  <div className="bg-zinc-800 p-3 rounded-xl text-xs text-zinc-300">How can I help you outside of the main timeline?</div>
-                  {/* Chat messages would go here */}
+                  <div className="bg-zinc-800/50 p-3 rounded-xl text-[13px] text-zinc-400 border border-zinc-800">
+                      Welcome to the room! Chat with peers here. Tag <strong className="text-indigo-400">@gemini</strong> to summon the AI.
+                  </div>
+                  {chitchatMsgs.map((m, i) => (
+                      <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                          <div className={`p-2.5 rounded-xl max-w-[85%] text-[13px] ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-zinc-800 border border-zinc-700 text-zinc-200 rounded-bl-sm'}`}>
+                             <ReactMarkdown className="prose prose-invert prose-p:leading-snug max-w-none">{m.content}</ReactMarkdown>
+                          </div>
+                      </div>
+                  ))}
+                  {chitchatLoading && <div className="text-xs text-zinc-500 flex items-center gap-2"><Loader2 size={12} className="animate-spin text-indigo-500"/> Gemini is typing...</div>}
                </div>
                <div className="p-3 border-t border-zinc-800 bg-zinc-950 flex gap-2">
-                  <input type="text" placeholder="Type..." value={chitchatInput} onChange={e => setChitchatInput(e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-sm text-white focus:outline-none" />
-                  <button className="bg-indigo-600 hover:bg-indigo-500 text-white p-2 rounded-lg"><Send size={14}/></button>
+                  <input type="text" placeholder="Type..." value={chitchatInput} onKeyDown={e => e.key === 'Enter' && handleChitchatSend()} onChange={e => setChitchatInput(e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
+                  <button onClick={handleChitchatSend} disabled={!chitchatInput.trim()} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white p-2 rounded-lg transition-colors"><Send size={14}/></button>
                </div>
             </div>
          ) : (
@@ -322,14 +380,13 @@ export default function DialogTreeHome() {
          )}
       </div>
 
-      {/* Modals... */}
       {forkModal.isOpen && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
             <div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold flex items-center gap-2"><GitFork size={20} className="text-indigo-400"/> Diverge Timeline</h2><button onClick={() => setForkModal(prev => ({ ...prev, isOpen: false }))} className="text-zinc-500 hover:text-zinc-300"><X size={20}/></button></div>
             <input type="text" autoFocus placeholder="Name this timeline..." value={forkModal.name} onChange={e => setForkModal(prev => ({ ...prev, name: e.target.value }))} onKeyDown={e => e.key === 'Enter' && submitFork()} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-zinc-100 mb-4 focus:outline-none focus:border-indigo-500" />
             <div className="flex items-center gap-3 mb-6 bg-zinc-950/50 p-3 rounded-lg border border-zinc-800">
-              <input type="checkbox" id="ephemeral" checked={forkModal.isEphemeral} onChange={e => setForkModal(prev => ({ ...prev, isEphemeral: e.target.checked }))} className="w-4 h-4 rounded bg-zinc-900 border-zinc-700 text-indigo-600" />
+              <input type="checkbox" id="ephemeral" checked={forkModal.isEphemeral} onChange={e => setForkModal(prev => ({ ...prev, isEphemeral: e.target.checked }))} className="w-4 h-4 rounded bg-zinc-900 border-zinc-700 text-indigo-600 focus:ring-indigo-600" />
               <label htmlFor="ephemeral" className="text-sm text-zinc-300 flex items-center gap-2 cursor-pointer"><Zap size={14} className={forkModal.isEphemeral ? "text-amber-400" : "text-zinc-600"}/> Temporary Workspace</label>
             </div>
             <div className="flex justify-end gap-3"><button onClick={() => setForkModal(prev => ({ ...prev, isOpen: false }))} className="px-4 py-2 text-sm text-zinc-400">Cancel</button><button onClick={submitFork} disabled={!forkModal.name.trim()} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">Create Branch</button></div>
@@ -337,10 +394,11 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* Sidebar with Git Connections */}
-      <aside className="w-64 border-r border-zinc-800 flex flex-col bg-zinc-950/50">
+      {/* Sidebar with Git Indentation & Deletion */}
+      <aside className="w-72 border-r border-zinc-800 flex flex-col bg-zinc-950/50 z-10">
         <div className="p-4 flex items-center justify-between mb-2">
           <div className="flex items-center gap-2"><div className="bg-indigo-600 p-1.5 rounded-lg"><GitBranch size={18} className="text-white" /></div><h1 className="font-bold text-md tracking-tight">DialogTree</h1></div>
+          <button onClick={copyShareLink} className="text-zinc-500 hover:text-indigo-400 transition-colors" title="Invite Collaborators"><Share2 size={16} /></button>
         </div>
         <div className="px-4 mb-4">
           <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-2.5 flex items-center justify-between">
@@ -351,20 +409,27 @@ export default function DialogTreeHome() {
         <nav className="flex-1 px-3 overflow-y-auto">
           <div className="text-xs font-semibold text-zinc-500 mb-3 px-2 uppercase tracking-wider">Timelines</div>
           {branches.length === 0 ? (<div className="px-2 text-zinc-600 text-sm italic">Loading branches...</div>) : (
-            <div className="relative ml-2 border-l border-zinc-800 space-y-2 pb-4">
-               {branches.map((b) => (
-                 <div key={b.id} className="relative flex items-center">
-                   {/* Visual Git Node Line */}
-                   <div className="absolute -left-[1px] w-4 border-t border-zinc-800"></div>
-                   <button 
-                     onClick={() => setActiveBranch(b)} 
-                     className={`w-full ml-3 flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeBranch?.id === b.id ? 'bg-zinc-800 text-indigo-400 border border-zinc-700' : 'hover:bg-zinc-900 text-zinc-400 hover:text-zinc-200'}`}
-                   >
-                     {b.is_ephemeral ? <Zap size={14} className="text-amber-400 shrink-0" /> : <GitBranch size={14} className="shrink-0" />}
-                     <span className="truncate">{b.name}</span>
-                   </button>
-                 </div>
-               ))}
+            <div className="relative space-y-1 pb-4">
+               {branches.map((b) => {
+                 const depth = getBranchDepth(b);
+                 return (
+                   <div key={b.id} className="relative flex items-center group" style={{ paddingLeft: `${depth * 16}px` }}>
+                     {depth > 0 && <div className="absolute w-3 border-t border-zinc-700" style={{ left: `${(depth * 16) - 10}px` }}></div>}
+                     <button 
+                       onClick={() => setActiveBranch(b)} 
+                       className={`flex-1 flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors ${activeBranch?.id === b.id ? 'bg-zinc-800 text-indigo-400 border border-zinc-700' : 'hover:bg-zinc-900 text-zinc-400 hover:text-zinc-200'}`}
+                     >
+                       <div className="flex items-center gap-2 truncate pr-2">
+                           {b.is_ephemeral ? <Zap size={14} className="text-amber-400 shrink-0" /> : <GitBranch size={14} className="shrink-0" />}
+                           <span className="truncate">{b.name}</span>
+                       </div>
+                       {b.name !== 'main' && (
+                           <Trash2 size={14} onClick={(e) => deleteBranch(b.id, e)} className="text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity shrink-0" />
+                       )}
+                     </button>
+                   </div>
+                 );
+               })}
             </div>
           )}
         </nav>
@@ -383,19 +448,17 @@ export default function DialogTreeHome() {
           </div>
         </header>
 
-        {/* Dynamic Messages (Fixed Overflow) */}
         <div className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth min-h-0">
           {switching ? (<div className="flex justify-center mt-20"><Loader2 size={24} className="animate-spin text-indigo-500" /></div>) : messages.length === 0 ? (<div className="text-center mt-20 text-zinc-500">Start typing...</div>) : (
             messages.map((m, i) => (
               <div key={i} className={`flex gap-4 ${m.role === 'user' ? 'justify-end' : m.role === 'system' ? 'justify-center' : 'justify-start'}`}>
-                <div className={`p-5 rounded-2xl max-w-[85%] shadow-sm relative group min-w-0 ${m.role === 'user' ? 'bg-zinc-800 text-zinc-100' : m.role === 'system' ? 'bg-zinc-900/50 border border-zinc-800 text-zinc-400 rounded-lg w-full text-center text-xs font-mono tracking-wide' : 'bg-transparent text-zinc-200'}`}>
+                <div className={`p-5 rounded-2xl max-w-[85%] shadow-sm relative group min-w-0 ${m.role === 'user' ? 'bg-zinc-800 text-zinc-100' : m.role === 'system' ? 'bg-zinc-900/80 border border-zinc-700 text-zinc-300 rounded-lg w-full text-center text-xs font-mono tracking-wide shadow-md' : 'bg-transparent text-zinc-200'}`}>
                   {m.role === 'user' ? (
                     <div className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">
                       {m.content}
                     </div>
                   ) : (
                     <div className="prose prose-invert max-w-none text-[15px] leading-relaxed break-words overflow-hidden">
-                      {/* Injecting our Custom Code Renderer */}
                       <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>{m.content}</ReactMarkdown>
                     </div>
                   )}
@@ -409,17 +472,11 @@ export default function DialogTreeHome() {
           {loading && (<div className="flex gap-3 items-center text-zinc-400 text-sm bg-zinc-900/50 w-max px-4 py-2 rounded-full border border-zinc-800/50"><Loader2 size={16} className="animate-spin text-indigo-500" /> <span>AI is thinking...</span></div>)}
         </div>
 
-        {/* Input Area with Multiple File Pills */}
         <div className="p-6 pt-2 shrink-0">
           <div className="max-w-4xl mx-auto relative group flex items-end gap-3 bg-zinc-900 border border-zinc-800 rounded-3xl p-2 shadow-xl focus-within:border-indigo-500/50 focus-within:ring-1 focus-within:ring-indigo-500/50 transition-all">
-            
             <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.md,.js,.ts,.py,.json,.html,.css,.csv,.pdf" />
-            <button onClick={() => fileInputRef.current?.click()} className="p-3.5 bg-zinc-800/50 rounded-2xl text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800 transition-all mb-1">
-              <Paperclip size={20} />
-            </button>
-
+            <button onClick={() => fileInputRef.current?.click()} className="p-3.5 bg-zinc-800/50 rounded-2xl text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800 transition-all mb-1"><Paperclip size={20} /></button>
             <div className="relative flex-1 flex flex-col justify-end min-w-0">
-              {/* Stack of File Pills */}
               {selectedFiles.length > 0 && (
                  <div className="flex flex-wrap gap-2 mb-3">
                     {selectedFiles.map((file, idx) => (
@@ -432,26 +489,17 @@ export default function DialogTreeHome() {
                  </div>
               )}
               <textarea 
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }}
-                disabled={switching || !activeBranch}
-                placeholder={`Message #${activeBranch?.name || '...'}`}
-                className="w-full bg-transparent border-none py-3 px-2 focus:outline-none focus:ring-0 text-[15px] resize-none overflow-y-auto"
-                style={{ minHeight: '50px', maxHeight: '200px', height: input ? 'auto' : '50px' }}
+                value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }} disabled={switching || !activeBranch} placeholder={`Message #${activeBranch?.name || '...'}`} className="w-full bg-transparent border-none py-3 px-2 focus:outline-none focus:ring-0 text-[15px] resize-none overflow-y-auto" style={{ minHeight: '50px', maxHeight: '200px', height: input ? 'auto' : '50px' }}
               />
             </div>
-            
-            <button onClick={handleSend} disabled={loading || switching || (!input.trim() && selectedFiles.length === 0)} className="p-3.5 mb-1 bg-indigo-600 rounded-2xl hover:bg-indigo-500 disabled:opacity-50 disabled:bg-zinc-800 transition-all active:scale-95 shrink-0">
-                <Send size={18} className={(input.trim() || selectedFiles.length > 0) ? "text-white" : "text-zinc-400"} />
-            </button>
+            <button onClick={handleSend} disabled={loading || switching || (!input.trim() && selectedFiles.length === 0)} className="p-3.5 mb-1 bg-indigo-600 rounded-2xl hover:bg-indigo-500 disabled:opacity-50 disabled:bg-zinc-800 transition-all active:scale-95 shrink-0"><Send size={18} className={(input.trim() || selectedFiles.length > 0) ? "text-white" : "text-zinc-400"} /></button>
           </div>
         </div>
       </main>
 
-      {/* RIGHT PANEL: CLAUDE-STYLE ARTIFACT VIEWER */}
+      {/* RIGHT PANEL: CLAUDE-STYLE ARTIFACT VIEWER WITH DOWNLOAD */}
       {activeArtifact && (
-        <aside className="w-1/3 min-w-[400px] border-l border-zinc-800 bg-zinc-950 flex flex-col shadow-2xl z-20">
+        <aside className="w-[45%] min-w-[400px] border-l border-zinc-800 bg-zinc-950 flex flex-col shadow-2xl z-20">
             <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900">
                 <div className="flex items-center gap-2">
                     <Code size={18} className="text-indigo-400"/>
@@ -459,19 +507,13 @@ export default function DialogTreeHome() {
                     <span className="ml-2 text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded uppercase tracking-wider">{activeArtifact.lang}</span>
                 </div>
                 <div className="flex gap-2">
-                    <button 
-                        onClick={() => navigator.clipboard.writeText(activeArtifact.code)} 
-                        className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors"
-                    >
-                        Copy
-                    </button>
+                    <button onClick={downloadCode} className="flex items-center gap-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors"><Download size={14}/> Download</button>
+                    <button onClick={() => navigator.clipboard.writeText(activeArtifact.code)} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors">Copy</button>
                     <button onClick={() => setActiveArtifact(null)} className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-zinc-800 transition-colors"><X size={18}/></button>
                 </div>
             </div>
             <div className="flex-1 overflow-auto p-4 bg-[#0d1117]">
-                <pre className="text-[13px] font-mono text-zinc-300 whitespace-pre">
-                    {activeArtifact.code}
-                </pre>
+                <pre className="text-[13px] font-mono text-zinc-300 whitespace-pre">{activeArtifact.code}</pre>
             </div>
         </aside>
       )}
