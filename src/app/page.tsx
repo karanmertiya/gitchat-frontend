@@ -47,6 +47,7 @@ export default function DialogTreeHome() {
   // THE MULTIPLAYER JOIN LOGIC
   useEffect(() => {
     if (!session?.user?.id) return;
+    
     const setup = async () => {
       try {
         const urlParams = new URLSearchParams(window.location.search);
@@ -54,21 +55,20 @@ export default function DialogTreeHome() {
 
         const data = await api.init(session.user.id, "My First Workspace", joinId);
         
-        // 🚨 THE ESCAPE HATCH: If the backend fails, nuke the session and go to login
-        if (data.error) {
-            console.error("Backend refused connection:", data.error);
-            await supabase.auth.signOut();
-            setSession(null);
-            return;
-        }
+        if (data.error) throw new Error(data.error);
+        if (!data.workspace) throw new Error("Backend did not return a workspace.");
 
-        if (!data.workspace) return;
         setWorkspace(data.workspace);
         setActiveBranch(data.branch);
         const branchData = await api.getBranches(data.workspace.id);
         setBranches(branchData.branches);
-      } catch (err) {
-        console.error("Setup completely failed:", err);
+      } catch (err: any) {
+        console.error("🔥 CRITICAL SETUP FAILURE:", err);
+        alert(`Connection Failed: ${err.message}\n\nLogging you out to protect the session state.`);
+        
+        // Force Nuke
+        await supabase.auth.signOut();
+        setSession(null);
       }
     };
     setup();
