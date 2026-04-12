@@ -9,8 +9,7 @@ import { supabase } from '@/lib/supabase';
 export default function DialogTreeHome() {
   const [session, setSession] = useState<any>(null);
   
-  // Auth State
-  const [authName, setAuthName] = useState(''); // NEW: Name State
+  const [authName, setAuthName] = useState('');
   const [authEmail, setAuthEmail] = useState('');
   const [authPassword, setAuthPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
@@ -45,11 +44,16 @@ export default function DialogTreeHome() {
     return () => subscription.unsubscribe();
   }, []);
 
+  // THE MULTIPLAYER JOIN LOGIC
   useEffect(() => {
     if (!session?.user?.id) return;
     const setup = async () => {
       try {
-        const data = await api.init(session.user.id, "My First Workspace");
+        // Read the URL. Did a friend send us a link?
+        const urlParams = new URLSearchParams(window.location.search);
+        const joinId = urlParams.get('workspace');
+
+        const data = await api.init(session.user.id, "My First Workspace", joinId);
         if (!data.workspace) return;
         setWorkspace(data.workspace);
         setActiveBranch(data.branch);
@@ -62,6 +66,7 @@ export default function DialogTreeHome() {
     setup();
   }, [session]);
 
+  // LOAD MAIN TIMELINE
   useEffect(() => {
     const loadHistory = async () => {
       if (!activeBranch) return;
@@ -79,20 +84,36 @@ export default function DialogTreeHome() {
     loadHistory();
   }, [activeBranch]);
 
-  // --- UPGRADED AUTH LOGIC (WITH NAME SUPPORT) ---
+  // THE MULTIPLAYER REALTIME ENGINE (WebSockets)
+  useEffect(() => {
+    if (!workspace) return;
+    
+    // Load initial Chitchat history
+    api.getChitchat(workspace.id).then(res => setChitchatMsgs(res.messages || []));
+
+    // Listen for live updates from friends!
+    const channel = supabase.channel('room_updates')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
+        if (activeBranch) api.getMessages(activeBranch.id).then(res => setMessages(res.messages || []));
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'chitchat_messages' }, () => {
+        api.getChitchat(workspace.id).then(res => setChitchatMsgs(res.messages || []));
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'branches' }, () => {
+        api.getBranches(workspace.id).then(res => setBranches(res.branches || []));
+      })
+      .subscribe();
+
+    return () => { supabase.removeChannel(channel); }
+  }, [workspace, activeBranch]);
+
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthLoading(true); setAuthError(''); setVerifyMessage('');
     try {
       if (isSignUp) {
-        // Pass the name securely into Supabase's user metadata
-        const { data, error } = await supabase.auth.signUp({ 
-            email: authEmail, 
-            password: authPassword,
-            options: { data: { full_name: authName } }
-        });
+        const { data, error } = await supabase.auth.signUp({ email: authEmail, password: authPassword, options: { data: { full_name: authName } } });
         if (error) throw error;
-        
         if (data.user && !data.session) {
             setVerifyMessage('Registration successful! Please check your email to verify your account.');
             setAuthEmail(''); setAuthPassword(''); setAuthName(''); setIsSignUp(false);
@@ -113,36 +134,25 @@ export default function DialogTreeHome() {
     }
   };
 
-  const handleOAuth = async (provider: 'google' | 'github') => {
-    await supabase.auth.signInWithOAuth({ provider });
-  };
-
-  const handleLogout = async () => {
-    await supabase.auth.signOut();
-    setWorkspace(null); setActiveBranch(null); setMessages([]);
-  };
+  const handleOAuth = async (provider: 'google' | 'github') => { await supabase.auth.signInWithOAuth({ provider }); };
+  const handleLogout = async () => { await supabase.auth.signOut(); setWorkspace(null); setActiveBranch(null); setMessages([]); };
 
   const handleSend = async () => {
     let finalPrompt = input.trim();
     if (selectedFiles.length > 0) {
-        selectedFiles.forEach(f => {
-            finalPrompt += `\n\n[Attached File: ${f.name}]\n\`\`\`${f.ext}\n${f.content}\n\`\`\``;
-        });
+        selectedFiles.forEach(f => { finalPrompt += `\n\n[Attached File: ${f.name}]\n\`\`\`${f.ext}\n${f.content}\n\`\`\``; });
     }
-
     if (!finalPrompt || !activeBranch) return;
     setInput(""); setSelectedFiles([]); setLoading(true);
 
     const lastMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
+    
+    // Optimistic UI update (Realtime will sync it to friends instantly)
     setMessages(prev => [...prev, { role: 'user', content: finalPrompt, id: 'temp' }]);
 
     try {
       const data = await api.chat(activeBranch.id, finalPrompt, lastMsgId, messages);
       if (data.error) throw new Error(data.error);
-      setMessages(prev => {
-        const filtered = prev.filter(m => m.id !== 'temp');
-        return [...filtered, { id: data.userMessageId, role: 'user', content: finalPrompt }, { id: data.aiMessageId, role: 'ai', content: data.aiResponse }];
-      });
     } catch (err: any) {
       setMessages(prev => prev.filter(m => m.id !== 'temp'));
       alert(`Failed to get AI response: \n\n${err.message || "Server is busy."}`);
@@ -153,17 +163,10 @@ export default function DialogTreeHome() {
 
   const submitFork = async () => {
     if (!forkModal.name.trim() || !forkModal.messageId) return;
-    setLoading(true);
-    setForkModal(prev => ({ ...prev, isOpen: false })); 
+    setLoading(true); setForkModal(prev => ({ ...prev, isOpen: false })); 
     try {
-      const data = await api.branch(workspace.id, forkModal.name, forkModal.isEphemeral, forkModal.messageId, activeBranch.id);
-      const targetIndex = messages.findIndex(m => m.id === forkModal.messageId);
-      const slicedMessages = messages.slice(0, targetIndex + 1);
-      const systemCommit = { role: 'system', content: `🌱 Timeline diverged: #${data.branch.name}`, id: data.systemMsgId };
-      
-      setBranches(prev => [...prev, data.branch]);
-      setMessages([...slicedMessages, systemCommit]);
-      setActiveBranch(data.branch);
+      await api.branch(workspace.id, forkModal.name, forkModal.isEphemeral, forkModal.messageId, activeBranch.id);
+      // Wait for Realtime to auto-refresh the UI
     } catch (err) {
       alert("Failed to create new timeline.");
     } finally {
@@ -176,31 +179,17 @@ export default function DialogTreeHome() {
     if (!window.confirm("Are you sure you want to permanently delete this branch?")) return;
     try {
       await api.deleteBranch(branchId);
-      setBranches(prev => prev.filter(b => b.id !== branchId));
-      if (activeBranch?.id === branchId) {
-        const main = branches.find(b => b.name === 'main');
-        setActiveBranch(main || null);
-      }
-    } catch (err) {
-      console.error("Failed to delete", err);
-    }
+      if (activeBranch?.id === branchId) setActiveBranch(branches.find(b => b.name === 'main') || null);
+    } catch (err) { console.error("Failed to delete", err); }
   };
 
   const makePermanent = async () => {
     if (!activeBranch) return;
-    try {
-      const data = await api.toggleEphemeral(activeBranch.id);
-      setActiveBranch(data.branch);
-      setBranches(prev => prev.map(b => b.id === data.branch.id ? data.branch : b));
-    } catch (err) {
-      console.error("Failed to make permanent", err);
-    }
+    try { await api.toggleEphemeral(activeBranch.id); } catch (err) {}
   };
 
   const handleMerge = async () => {
-    if (!activeBranch || activeBranch.name === 'main') {
-      alert("You are already in the main timeline!"); return;
-    }
+    if (!activeBranch || activeBranch.name === 'main') { alert("You are already in the main timeline!"); return; }
     const mainBranch = branches.find(b => b.name === 'main');
     const latestSourceMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
     if (!mainBranch || !latestSourceMsgId) return;
@@ -211,7 +200,6 @@ export default function DialogTreeHome() {
       if(res.error) throw new Error(res.error);
       
       await api.deleteBranch(activeBranch.id);
-      setBranches(prev => prev.filter(b => b.id !== activeBranch.id));
       alert("Branch successfully Squashed & Merged!");
       setActiveBranch(mainBranch); 
     } catch(e: any) {
@@ -224,9 +212,7 @@ export default function DialogTreeHome() {
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
     const files = Array.from(e.target.files);
-    if (files.some(f => f.size > 1024 * 1024 * 5)) { 
-      alert("One of your files is too large. Keep under 5MB."); return;
-    }
+    if (files.some(f => f.size > 1024 * 1024 * 5)) { alert("One of your files is too large. Keep under 5MB."); return; }
     const newFiles = await Promise.all(files.map(async file => {
       const text = await file.text(); 
       return { name: file.name, content: text, ext: file.name.split('.').pop() || 'txt' };
@@ -240,31 +226,32 @@ export default function DialogTreeHome() {
     const blob = new Blob([activeArtifact.code], { type: 'text/plain' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `artifact.${activeArtifact.lang}`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    a.href = url; a.download = `artifact.${activeArtifact.lang}`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
   };
 
+  // MULTIPLAYER CHITCHAT SENDER
   const handleChitchatSend = async () => {
-    if (!chitchatInput.trim()) return;
+    if (!chitchatInput.trim() || !workspace) return;
     const msg = chitchatInput;
     setChitchatInput("");
-    setChitchatMsgs(prev => [...prev, { role: 'user', content: msg }]);
-
+    
+    const userName = session.user.user_metadata?.full_name || session.user.email.split('@')[0];
+    
+    // AI only responds if @gemini is tagged
     if (msg.includes('@gemini')) {
         setChitchatLoading(true);
         try {
             const aiHistory = chitchatMsgs.map(m => ({ role: m.role === 'ai' ? 'model' : 'user', parts: [{ text: m.content }]}));
-            const res = await api.chitchat(msg, aiHistory);
-            setChitchatMsgs(prev => [...prev, { role: 'ai', content: res.response }]);
+            await api.chitchat(workspace.id, userName, msg, aiHistory);
         } catch (e) {
             console.error(e);
         } finally {
             setChitchatLoading(false);
         }
+    } else {
+        // Otherwise, just save to DB for human friends to see
+        await api.chitchat(workspace.id, userName, msg);
     }
   };
 
@@ -283,9 +270,7 @@ export default function DialogTreeHome() {
       return !inline && match ? (
         <div className="relative group mt-4 mb-4">
           <div className="absolute top-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-            <button onClick={() => setActiveArtifact({ code: codeString, lang: match[1] })} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded-lg shadow-lg transition-all">
-                <Code size={14}/> Open in Editor
-            </button>
+            <button onClick={() => setActiveArtifact({ code: codeString, lang: match[1] })} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded-lg shadow-lg transition-all"><Code size={14}/> Open in Editor</button>
           </div>
           <pre className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 overflow-x-auto text-[13px] leading-relaxed"><code className={className} {...props}>{children}</code></pre>
         </div>
@@ -294,8 +279,7 @@ export default function DialogTreeHome() {
   };
 
   const getBranchDepth = (branch: any) => {
-    let depth = 0;
-    let curr = branch;
+    let depth = 0; let curr = branch;
     while (curr.parent_branch_id) {
         depth++;
         curr = branches.find(b => b.id === curr.parent_branch_id) || {};
@@ -304,7 +288,7 @@ export default function DialogTreeHome() {
   };
 
   // ==========================================
-  // RENDER: LOGIN (WITH NAME FIELD)
+  // RENDER: LOGIN
   // ==========================================
   if (!session) {
     return (
@@ -338,12 +322,8 @@ export default function DialogTreeHome() {
                 {authError && <div className="bg-red-500/10 border border-red-500/50 text-red-400 text-sm p-3 rounded-lg">{authError}</div>}
                 {verifyMessage && <div className="bg-emerald-500/10 border border-emerald-500/50 text-emerald-400 text-sm p-3 rounded-lg flex items-start gap-2"><CheckCircle2 size={18} className="shrink-0 mt-0.5" /><p>{verifyMessage}</p></div>}
                 
-                {/* Conditionally render the Name field only on Signup */}
                 {isSignUp && (
-                  <div>
-                    <label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Full Name</label>
-                    <input type="text" value={authName} onChange={e => setAuthName(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500" placeholder="Jane Doe" />
-                  </div>
+                  <div><label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Full Name</label><input type="text" value={authName} onChange={e => setAuthName(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500" placeholder="Jane Doe" /></div>
                 )}
                 
                 <div><label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Email</label><input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500" placeholder="engineer@example.com" /></div>
@@ -363,22 +343,22 @@ export default function DialogTreeHome() {
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans relative overflow-hidden">
       
-      {/* FLOATING META-CHAT */}
+      {/* FLOATING MULTIPLAYER CHITCHAT */}
       <div className="absolute bottom-6 right-6 z-50">
          {isChitchatOpen ? (
             <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-80 shadow-2xl flex flex-col h-[450px] overflow-hidden">
                <div className="p-3 border-b border-zinc-800 flex justify-between items-center bg-zinc-950">
-                  <span className="text-sm font-semibold text-zinc-300 flex items-center gap-2"><MessageCircle size={16} className="text-indigo-400"/> General Chitchat</span>
+                  <span className="text-sm font-semibold text-zinc-300 flex items-center gap-2"><MessageCircle size={16} className="text-indigo-400"/> Chitchat Room</span>
                   <button onClick={() => setIsChitchatOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={16}/></button>
                </div>
                <div className="flex-1 p-4 overflow-y-auto flex flex-col gap-3">
-                  <div className="bg-zinc-800/50 p-3 rounded-xl text-[13px] text-zinc-400 border border-zinc-800">
-                      Welcome to the room! Chat with peers here. Tag <strong className="text-indigo-400">@gemini</strong> to summon the AI.
+                  <div className="bg-zinc-800/50 p-3 rounded-xl text-[13px] text-zinc-400 border border-zinc-800 text-center">
+                      Chat with peers in real-time. Tag <strong className="text-indigo-400">@gemini</strong> to summon the AI.
                   </div>
                   {chitchatMsgs.map((m, i) => (
-                      <div key={i} className={`flex ${m.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                      <div key={i} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'}`}>
+                          <span className="text-[10px] text-zinc-500 mb-1 px-1">{m.sender_name}</span>
                           <div className={`p-2.5 rounded-xl max-w-[85%] ${m.role === 'user' ? 'bg-indigo-600 text-white rounded-br-sm' : 'bg-zinc-800 border border-zinc-700 text-zinc-200 rounded-bl-sm'}`}>
-                             {/* FIXED REACT MARKDOWN CRASH HERE */}
                              <div className="prose prose-invert prose-p:leading-snug max-w-none text-[13px]">
                                 <ReactMarkdown remarkPlugins={[remarkGfm]}>{m.content}</ReactMarkdown>
                              </div>
@@ -388,7 +368,7 @@ export default function DialogTreeHome() {
                   {chitchatLoading && <div className="text-xs text-zinc-500 flex items-center gap-2"><Loader2 size={12} className="animate-spin text-indigo-500"/> Gemini is typing...</div>}
                </div>
                <div className="p-3 border-t border-zinc-800 bg-zinc-950 flex gap-2">
-                  <input type="text" placeholder="Type..." value={chitchatInput} onKeyDown={e => e.key === 'Enter' && handleChitchatSend()} onChange={e => setChitchatInput(e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
+                  <input type="text" placeholder="Type message..." value={chitchatInput} onKeyDown={e => e.key === 'Enter' && handleChitchatSend()} onChange={e => setChitchatInput(e.target.value)} className="w-full bg-zinc-900 border border-zinc-800 rounded-lg p-2 text-sm text-white focus:outline-none focus:border-indigo-500" />
                   <button onClick={handleChitchatSend} disabled={!chitchatInput.trim()} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white p-2 rounded-lg transition-colors"><Send size={14}/></button>
                </div>
             </div>
@@ -405,7 +385,7 @@ export default function DialogTreeHome() {
             <div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold flex items-center gap-2"><GitFork size={20} className="text-indigo-400"/> Diverge Timeline</h2><button onClick={() => setForkModal(prev => ({ ...prev, isOpen: false }))} className="text-zinc-500 hover:text-zinc-300"><X size={20}/></button></div>
             <input type="text" autoFocus placeholder="Name this timeline..." value={forkModal.name} onChange={e => setForkModal(prev => ({ ...prev, name: e.target.value }))} onKeyDown={e => e.key === 'Enter' && submitFork()} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-zinc-100 mb-4 focus:outline-none focus:border-indigo-500" />
             <div className="flex items-center gap-3 mb-6 bg-zinc-950/50 p-3 rounded-lg border border-zinc-800">
-              <input type="checkbox" id="ephemeral" checked={forkModal.isEphemeral} onChange={e => setForkModal(prev => ({ ...prev, isEphemeral: e.target.checked }))} className="w-4 h-4 rounded bg-zinc-900 border-zinc-700 text-indigo-600" />
+              <input type="checkbox" id="ephemeral" checked={forkModal.isEphemeral} onChange={e => setForkModal(prev => ({ ...prev, isEphemeral: e.target.checked }))} className="w-4 h-4 rounded bg-zinc-900 border-zinc-700 text-indigo-600 focus:ring-indigo-600" />
               <label htmlFor="ephemeral" className="text-sm text-zinc-300 flex items-center gap-2 cursor-pointer"><Zap size={14} className={forkModal.isEphemeral ? "text-amber-400" : "text-zinc-600"}/> Temporary Workspace</label>
             </div>
             <div className="flex justify-end gap-3"><button onClick={() => setForkModal(prev => ({ ...prev, isOpen: false }))} className="px-4 py-2 text-sm text-zinc-400">Cancel</button><button onClick={submitFork} disabled={!forkModal.name.trim()} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">Create Branch</button></div>
@@ -413,29 +393,24 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* Sidebar */}
+      {/* Sidebar with Git Indentation & Deletion */}
       <aside className="w-72 border-r border-zinc-800 flex flex-col bg-zinc-950/50 z-10">
         <div className="p-4 flex items-center justify-between mb-2">
           <div className="flex items-center gap-2"><div className="bg-indigo-600 p-1.5 rounded-lg"><GitBranch size={18} className="text-white" /></div><h1 className="font-bold text-md tracking-tight">DialogTree</h1></div>
           <button onClick={copyShareLink} className="text-zinc-500 hover:text-indigo-400 transition-colors" title="Invite Collaborators"><Share2 size={16} /></button>
         </div>
-        
-        {/* UPGRADED: User Badge now prominently shows Name */}
         <div className="px-4 mb-4">
           <div className="bg-zinc-900 border border-zinc-800 rounded-lg p-3 flex items-center justify-between">
             <div className="flex items-center gap-3 overflow-hidden">
                 <div className="bg-zinc-800 p-1.5 rounded-md"><User size={16} className="text-indigo-400"/></div>
                 <div className="min-w-0">
-                    <div className="truncate text-sm font-medium text-zinc-300">
-                        {session.user.user_metadata?.full_name || session.user.email.split('@')[0]}
-                    </div>
+                    <div className="truncate text-sm font-medium text-zinc-300">{session.user.user_metadata?.full_name || session.user.email.split('@')[0]}</div>
                     <div className="truncate text-xs text-zinc-500">{session.user.email}</div>
                 </div>
             </div>
             <button onClick={handleLogout} className="text-zinc-500 hover:text-red-400 transition-colors shrink-0 ml-2"><LogOut size={16} /></button>
           </div>
         </div>
-
         <nav className="flex-1 px-3 overflow-y-auto">
           <div className="text-xs font-semibold text-zinc-500 mb-3 px-2 uppercase tracking-wider">Timelines</div>
           {branches.length === 0 ? (<div className="px-2 text-zinc-600 text-sm italic">Loading branches...</div>) : (
@@ -527,7 +502,7 @@ export default function DialogTreeHome() {
         </div>
       </main>
 
-      {/* RIGHT PANEL: CLAUDE-STYLE ARTIFACT VIEWER */}
+      {/* RIGHT PANEL: CLAUDE-STYLE ARTIFACT VIEWER WITH DOWNLOAD */}
       {activeArtifact && (
         <aside className="w-[45%] min-w-[400px] border-l border-zinc-800 bg-zinc-950 flex flex-col shadow-2xl z-20">
             <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900">
@@ -547,6 +522,7 @@ export default function DialogTreeHome() {
             </div>
         </aside>
       )}
+
     </div>
   );
 }
