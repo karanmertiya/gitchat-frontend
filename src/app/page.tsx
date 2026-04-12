@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef } from 'react';
-import { GitBranch, GitMerge, Send, Plus, Zap, Loader2, MessageSquare, GitFork, X, Save, Paperclip, DownloadCloud, LogOut, Code, Globe, File, CheckCircle2, Maximize2, MessageCircle, Share2, Download, Trash2, User } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Plus, Zap, Loader2, MessageSquare, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, Download, Trash2, User, MessageCircle, Share2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -8,7 +8,7 @@ import { supabase } from '@/lib/supabase';
 
 export default function DialogTreeHome() {
   const [session, setSession] = useState<any>(null);
-  const [isInitializing, setIsInitializing] = useState(true); // NEW: Anti-Zombie loading state
+  const [isInitializing, setIsInitializing] = useState(true);
   
   const [authName, setAuthName] = useState('');
   const [authEmail, setAuthEmail] = useState('');
@@ -34,16 +34,13 @@ export default function DialogTreeHome() {
   const [chitchatLoading, setChitchatLoading] = useState(false);
 
   const [forkModal, setForkModal] = useState({ isOpen: false, messageId: null as string | null, name: "", isEphemeral: true });
-  const [importModal, setImportModal] = useState(false);
-  const [importUrl, setImportUrl] = useState("");
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 1. Initial Session Check
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
-      if (!session) setIsInitializing(false); // If no session, show login immediately
+      if (!session) setIsInitializing(false);
     });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
       setSession(session);
@@ -52,19 +49,16 @@ export default function DialogTreeHome() {
     return () => subscription.unsubscribe();
   }, []);
 
-  // 2. The Anti-Zombie Setup Function
   useEffect(() => {
     if (!session?.user?.id) return;
     
     const setup = async () => {
       try {
-	console.log("🔥 VERCEL IS POINTING TO:", process.env.NEXT_PUBLIC_SUPABASE_URL);
         const urlParams = new URLSearchParams(window.location.search);
         const joinId = urlParams.get('workspace');
 
         const data = await api.init(session.user.id, "My First Workspace", joinId);
         
-        // 🚨 ESCAPE HATCH: If the backend throws a 500 error or fails
         if (data.error) throw new Error(data.error);
         if (!data.workspace) throw new Error("Backend connection failed.");
 
@@ -73,20 +67,18 @@ export default function DialogTreeHome() {
         const branchData = await api.getBranches(data.workspace.id);
         setBranches(branchData.branches);
         
-        setIsInitializing(false); // Successfully loaded, reveal the UI!
+        setIsInitializing(false);
       } catch (err: any) {
         console.error("🔥 CRITICAL SETUP FAILURE:", err);
         alert(`Backend Error: ${err.message}\n\nLogging out to prevent frozen UI.`);
         await supabase.auth.signOut();
         setSession(null);
-        setIsInitializing(false); // Force login screen to show
+        setIsInitializing(false);
       }
     };
     setup();
   }, [session]);
 
-
-  // LOAD MAIN TIMELINE
   useEffect(() => {
     const loadHistory = async () => {
       if (!activeBranch) return;
@@ -104,7 +96,6 @@ export default function DialogTreeHome() {
     loadHistory();
   }, [activeBranch]);
 
-  // THE MULTIPLAYER REALTIME ENGINE
   useEffect(() => {
     if (!workspace) return;
     
@@ -298,9 +289,6 @@ export default function DialogTreeHome() {
     return depth;
   };
 
-  // ==========================================
-  // RENDER: LOADING STATE (ANTI-ZOMBIE)
-  // ==========================================
   if (isInitializing) {
      return (
         <div className="flex h-screen bg-zinc-950 items-center justify-center font-sans">
@@ -312,9 +300,6 @@ export default function DialogTreeHome() {
      )
   }
 
-  // ==========================================
-  // RENDER: LOGIN
-  // ==========================================
   if (!session) {
     return (
         <div className="flex h-screen bg-zinc-950 font-sans">
@@ -362,13 +347,9 @@ export default function DialogTreeHome() {
       );
     }
 
-  // ==========================================
-  // RENDER: MAIN APP
-  // ==========================================
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans relative overflow-hidden">
       
-      {/* FLOATING MULTIPLAYER CHITCHAT */}
       <div className="absolute bottom-6 right-6 z-50">
          {isChitchatOpen ? (
             <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-80 shadow-2xl flex flex-col h-[450px] overflow-hidden">
@@ -418,7 +399,6 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* Sidebar with Git Indentation & Deletion */}
       <aside className="w-72 border-r border-zinc-800 flex flex-col bg-zinc-950/50 z-10">
         <div className="p-4 flex items-center justify-between mb-2">
           <div className="flex items-center gap-2"><div className="bg-indigo-600 p-1.5 rounded-lg"><GitBranch size={18} className="text-white" /></div><h1 className="font-bold text-md tracking-tight">DialogTree</h1></div>
@@ -465,7 +445,6 @@ export default function DialogTreeHome() {
         </nav>
       </aside>
 
-      {/* Main Chat Area */}
       <main className="flex-1 flex flex-col relative min-w-0 bg-zinc-950">
         <header className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-950/80 backdrop-blur-sm z-10 shrink-0">
           <div className="flex items-center gap-3">
@@ -527,7 +506,6 @@ export default function DialogTreeHome() {
         </div>
       </main>
 
-      {/* RIGHT PANEL: CLAUDE-STYLE ARTIFACT VIEWER WITH DOWNLOAD */}
       {activeArtifact && (
         <aside className="w-[45%] min-w-[400px] border-l border-zinc-800 bg-zinc-950 flex flex-col shadow-2xl z-20">
             <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900">
