@@ -8,6 +8,7 @@ import { supabase } from '@/lib/supabase';
 
 export default function DialogTreeHome() {
   const [session, setSession] = useState<any>(null);
+  const [isInitializing, setIsInitializing] = useState(true); // NEW: Anti-Zombie loading state
   
   const [authName, setAuthName] = useState('');
   const [authEmail, setAuthEmail] = useState('');
@@ -38,13 +39,20 @@ export default function DialogTreeHome() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // 1. Initial Session Check
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => setSession(session));
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => setSession(session));
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      if (!session) setIsInitializing(false); // If no session, show login immediately
+    });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      if (!session) setIsInitializing(false);
+    });
     return () => subscription.unsubscribe();
   }, []);
 
-  // THE MULTIPLAYER JOIN LOGIC
+  // 2. The Anti-Zombie Setup Function
   useEffect(() => {
     if (!session?.user?.id) return;
     
@@ -55,20 +63,22 @@ export default function DialogTreeHome() {
 
         const data = await api.init(session.user.id, "My First Workspace", joinId);
         
+        // 🚨 ESCAPE HATCH: If the backend throws a 500 error or fails
         if (data.error) throw new Error(data.error);
-        if (!data.workspace) throw new Error("Backend did not return a workspace.");
+        if (!data.workspace) throw new Error("Backend connection failed.");
 
         setWorkspace(data.workspace);
         setActiveBranch(data.branch);
         const branchData = await api.getBranches(data.workspace.id);
         setBranches(branchData.branches);
+        
+        setIsInitializing(false); // Successfully loaded, reveal the UI!
       } catch (err: any) {
         console.error("🔥 CRITICAL SETUP FAILURE:", err);
-        alert(`Connection Failed: ${err.message}\n\nLogging you out to protect the session state.`);
-        
-        // Force Nuke
+        alert(`Backend Error: ${err.message}\n\nLogging out to prevent frozen UI.`);
         await supabase.auth.signOut();
         setSession(null);
+        setIsInitializing(false); // Force login screen to show
       }
     };
     setup();
@@ -92,14 +102,12 @@ export default function DialogTreeHome() {
     loadHistory();
   }, [activeBranch]);
 
-  // THE MULTIPLAYER REALTIME ENGINE (WebSockets)
+  // THE MULTIPLAYER REALTIME ENGINE
   useEffect(() => {
     if (!workspace) return;
     
-    // Load initial Chitchat history
     api.getChitchat(workspace.id).then(res => setChitchatMsgs(res.messages || []));
 
-    // Listen for live updates from friends!
     const channel = supabase.channel('room_updates')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
         if (activeBranch) api.getMessages(activeBranch.id).then(res => setMessages(res.messages || []));
@@ -154,8 +162,6 @@ export default function DialogTreeHome() {
     setInput(""); setSelectedFiles([]); setLoading(true);
 
     const lastMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
-    
-    // Optimistic UI update (Realtime will sync it to friends instantly)
     setMessages(prev => [...prev, { role: 'user', content: finalPrompt, id: 'temp' }]);
 
     try {
@@ -174,7 +180,6 @@ export default function DialogTreeHome() {
     setLoading(true); setForkModal(prev => ({ ...prev, isOpen: false })); 
     try {
       await api.branch(workspace.id, forkModal.name, forkModal.isEphemeral, forkModal.messageId, activeBranch.id);
-      // Wait for Realtime to auto-refresh the UI
     } catch (err) {
       alert("Failed to create new timeline.");
     } finally {
@@ -238,15 +243,12 @@ export default function DialogTreeHome() {
     document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
   };
 
-  // MULTIPLAYER CHITCHAT SENDER
   const handleChitchatSend = async () => {
     if (!chitchatInput.trim() || !workspace) return;
     const msg = chitchatInput;
     setChitchatInput("");
-    
     const userName = session.user.user_metadata?.full_name || session.user.email.split('@')[0];
     
-    // AI only responds if @gemini is tagged
     if (msg.includes('@gemini')) {
         setChitchatLoading(true);
         try {
@@ -258,7 +260,6 @@ export default function DialogTreeHome() {
             setChitchatLoading(false);
         }
     } else {
-        // Otherwise, just save to DB for human friends to see
         await api.chitchat(workspace.id, userName, msg);
     }
   };
@@ -294,6 +295,20 @@ export default function DialogTreeHome() {
     }
     return depth;
   };
+
+  // ==========================================
+  // RENDER: LOADING STATE (ANTI-ZOMBIE)
+  // ==========================================
+  if (isInitializing) {
+     return (
+        <div className="flex h-screen bg-zinc-950 items-center justify-center font-sans">
+           <div className="flex flex-col items-center gap-4">
+               <div className="bg-indigo-600 p-4 rounded-2xl shadow-lg shadow-indigo-500/20 animate-pulse"><GitBranch size={32} className="text-white" /></div>
+               <Loader2 size={24} className="animate-spin text-zinc-500" />
+           </div>
+        </div>
+     )
+  }
 
   // ==========================================
   // RENDER: LOGIN
