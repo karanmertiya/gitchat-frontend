@@ -158,7 +158,6 @@ export default function DialogTreeHome() {
 
     const lastMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
     
-    // We only show a temporary loading message to the user
     let displayPrompt = finalPrompt;
     if (currentAttachments.length > 0) {
        displayPrompt += `\n\n*(Uploading ${currentAttachments.length} attachments...)*`;
@@ -484,9 +483,8 @@ export default function DialogTreeHome() {
           {switching ? (<div className="flex justify-center mt-20"><Loader2 size={24} className="animate-spin text-indigo-500" /></div>) : messages.length === 0 ? (<div className="text-center mt-20 text-zinc-500">Start typing...</div>) : (
             messages.map((m, i) => {
               
-              // 🔥 THE INVISIBLE XML UI FILTER:
-              // This intercepts the raw database text, removes the XML chunk, and replaces it with a clean badge.
-              const displayContent = m.content.replace(/<attachment name="([^"]+)">[\s\S]*?<\/attachment>/g, '\n\n<br/> 📎 **Attached:** `$1`');
+              // 🔥 THE INVISIBLE ATTACHMENT FILTER
+              const displayContent = m.content.replace(/---START_ATTACHMENT:(.*?)---[\s\S]*?---END_ATTACHMENT---/g, '\n\n📎 **Attached Document:** `$1`');
 
               return (
               <div key={i} className={`flex gap-4 ${m.role === 'user' ? 'justify-end' : m.role === 'system' ? 'justify-center' : 'justify-start'}`}>
