@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef } from 'react';
-import { GitBranch, GitMerge, Send, Plus, Zap, Loader2, MessageSquare, GitFork, X, Save, Paperclip, DownloadCloud, LogOut, Code, Globe, File } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Plus, Zap, Loader2, MessageSquare, GitFork, X, Save, Paperclip, DownloadCloud, LogOut, Code, Globe, File, CheckCircle2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -13,6 +13,7 @@ export default function DialogTreeHome() {
   const [isSignUp, setIsSignUp] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
   const [authError, setAuthError] = useState('');
+  const [verifyMessage, setVerifyMessage] = useState(''); // NEW: Email Verification State
 
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState("");
@@ -68,18 +69,36 @@ export default function DialogTreeHome() {
     loadHistory();
   }, [activeBranch]);
 
+  // --- UPGRADED AUTH LOGIC (WITH EMAIL VERIFICATION) ---
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthLoading(true);
     setAuthError('');
+    setVerifyMessage('');
+
     try {
       if (isSignUp) {
-        const { error } = await supabase.auth.signUp({ email: authEmail, password: authPassword });
+        const { data, error } = await supabase.auth.signUp({ email: authEmail, password: authPassword });
         if (error) throw error;
-        alert('Account created! Welcome to DialogTree.');
+        
+        // If Supabase requires email confirmation, the session will be null upon signup
+        if (data.user && !data.session) {
+            setVerifyMessage('Registration successful! Please check your email to verify your account before logging in.');
+            setAuthEmail('');
+            setAuthPassword('');
+            setIsSignUp(false); // Switch them back to login view
+        } else {
+            // If email confirmation is off, they log in instantly
+            setVerifyMessage('Account created successfully!');
+        }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
-        if (error) throw error;
+        if (error) {
+            if (error.message.includes("Email not confirmed")) {
+                throw new Error("Please check your email and click the verification link before logging in.");
+            }
+            throw error;
+        }
       }
     } catch (error: any) {
       setAuthError(error.message);
@@ -115,7 +134,6 @@ export default function DialogTreeHome() {
     setMessages(prev => [...prev, { role: 'user', content: finalPrompt, id: 'temp' }]);
 
     try {
-      // ARCHITECTURE UPGRADE: Passing 'messages' array directly to the API
       const data = await api.chat(activeBranch.id, finalPrompt, lastMsgId, messages);
       
       if (data.error) throw new Error(data.error);
@@ -137,9 +155,10 @@ export default function DialogTreeHome() {
     setForkModal(prev => ({ ...prev, isOpen: false })); 
     try {
       const data = await api.branch(workspace.id, forkModal.name, forkModal.isEphemeral, forkModal.messageId);
+      
+      // PERFECT UI STATE COPY: Replicates the entire parent history instantly
       const targetIndex = messages.findIndex(m => m.id === forkModal.messageId);
       const slicedMessages = messages.slice(0, targetIndex + 1);
-      
       const systemCommit = { role: 'system', content: `🌱 Timeline diverged: #${data.branch.name}`, id: data.systemMsgId };
       
       setBranches(prev => [...prev, data.branch]);
@@ -174,9 +193,7 @@ export default function DialogTreeHome() {
 
     setLoading(true);
     try {
-      // ARCHITECTURE UPGRADE: Passing 'messages' array directly to the merge function
       const res = await api.merge(activeBranch.id, mainBranch.id, latestSourceMsgId, null, messages);
-      
       if(res.error) throw new Error(res.error);
       alert("Branch merged successfully! Jumping back to main timeline.");
       setActiveBranch(mainBranch); 
@@ -234,6 +251,7 @@ export default function DialogTreeHome() {
               <h3 className="text-2xl font-semibold text-white mb-2">Welcome back</h3>
               <p className="text-zinc-400 text-sm">Sign in to access your workspaces.</p>
             </div>
+
             <div className="flex gap-3 mb-6">
               <button onClick={() => handleOAuth('google')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Globe size={16} className="text-zinc-400" /> Google</button>
               <button onClick={() => handleOAuth('github')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Code size={16} className="text-zinc-400" /> GitHub</button>
@@ -241,13 +259,22 @@ export default function DialogTreeHome() {
             <div className="relative flex items-center py-4 mb-2">
               <div className="flex-grow border-t border-zinc-800"></div><span className="flex-shrink-0 mx-4 text-zinc-500 text-xs uppercase tracking-widest">Or continue with email</span><div className="flex-grow border-t border-zinc-800"></div>
             </div>
+
             <form onSubmit={handleEmailAuth} className="space-y-4">
+              {/* Error and Verification Banners */}
               {authError && <div className="bg-red-500/10 border border-red-500/50 text-red-400 text-sm p-3 rounded-lg">{authError}</div>}
+              {verifyMessage && (
+                  <div className="bg-emerald-500/10 border border-emerald-500/50 text-emerald-400 text-sm p-3 rounded-lg flex items-start gap-2">
+                      <CheckCircle2 size={18} className="shrink-0 mt-0.5" />
+                      <p>{verifyMessage}</p>
+                  </div>
+              )}
+
               <div><label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Email</label><input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500 transition-colors" placeholder="engineer@example.com" /></div>
               <div><label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Password</label><input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500 transition-colors" placeholder="••••••••" /></div>
               <button type="submit" disabled={authLoading} className="w-full bg-white hover:bg-zinc-200 text-zinc-950 font-semibold py-3 rounded-xl transition-all disabled:opacity-50 flex justify-center items-center gap-2 mt-4">{authLoading ? <Loader2 size={18} className="animate-spin text-zinc-500" /> : null}{isSignUp ? 'Create Account' : 'Sign In'}</button>
             </form>
-            <div className="mt-8 text-center"><button onClick={() => setIsSignUp(!isSignUp)} className="text-sm text-zinc-500 hover:text-indigo-400 transition-colors">{isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}</button></div>
+            <div className="mt-8 text-center"><button onClick={() => { setIsSignUp(!isSignUp); setVerifyMessage(''); setAuthError(''); }} className="text-sm text-zinc-500 hover:text-indigo-400 transition-colors">{isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}</button></div>
           </div>
         </div>
       </div>
