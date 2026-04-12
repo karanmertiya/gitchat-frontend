@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef } from 'react';
-import { GitBranch, GitMerge, Send, Plus, Zap, Loader2, MessageSquare, GitFork, X, Save, Paperclip, DownloadCloud, LogOut, Code, Globe, File, CheckCircle2, Maximize2, MessageCircle, Share2, Download, Trash2, User, Image as ImageIcon } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, MessageCircle, Share2, Download, Trash2, User } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -20,7 +20,6 @@ export default function DialogTreeHome() {
 
   const [messages, setMessages] = useState<any[]>([]);
   const [input, setInput] = useState("");
-  // 🔥 UPGRADED: State now tracks the Base64 type for images
   const [selectedFiles, setSelectedFiles] = useState<{name: string, base64: string, type: string, ext: string}[]>([]);
   const [loading, setLoading] = useState(false);
   const [switching, setSwitching] = useState(false);
@@ -147,7 +146,6 @@ export default function DialogTreeHome() {
   const handleOAuth = async (provider: 'google' | 'github') => { await supabase.auth.signInWithOAuth({ provider }); };
   const handleLogout = async () => { await supabase.auth.signOut(); setWorkspace(null); setActiveBranch(null); setMessages([]); };
 
-  // 🔥 UPGRADED: Now passes the Base64 attachments explicitly to the backend
   const handleSend = async () => {
     const finalPrompt = input.trim();
     if (!finalPrompt && selectedFiles.length === 0) return;
@@ -160,9 +158,10 @@ export default function DialogTreeHome() {
 
     const lastMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
     
+    // We only show a temporary loading message to the user
     let displayPrompt = finalPrompt;
     if (currentAttachments.length > 0) {
-       displayPrompt += `\n\n*(Sent ${currentAttachments.length} attachments)*`;
+       displayPrompt += `\n\n*(Uploading ${currentAttachments.length} attachments...)*`;
     }
     setMessages(prev => [...prev, { role: 'user', content: displayPrompt, id: 'temp' }]);
 
@@ -224,7 +223,6 @@ export default function DialogTreeHome() {
     }
   };
 
-  // 🔥 UPGRADED: Converts files to Base64
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
     const files = Array.from(e.target.files);
@@ -484,16 +482,22 @@ export default function DialogTreeHome() {
 
         <div className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth min-h-0">
           {switching ? (<div className="flex justify-center mt-20"><Loader2 size={24} className="animate-spin text-indigo-500" /></div>) : messages.length === 0 ? (<div className="text-center mt-20 text-zinc-500">Start typing...</div>) : (
-            messages.map((m, i) => (
+            messages.map((m, i) => {
+              
+              // 🔥 THE INVISIBLE XML UI FILTER:
+              // This intercepts the raw database text, removes the XML chunk, and replaces it with a clean badge.
+              const displayContent = m.content.replace(/<attachment name="([^"]+)">[\s\S]*?<\/attachment>/g, '\n\n<br/> 📎 **Attached:** `$1`');
+
+              return (
               <div key={i} className={`flex gap-4 ${m.role === 'user' ? 'justify-end' : m.role === 'system' ? 'justify-center' : 'justify-start'}`}>
                 <div className={`p-5 rounded-2xl max-w-[85%] shadow-sm relative group min-w-0 ${m.role === 'user' ? 'bg-zinc-800 text-zinc-100' : m.role === 'system' ? 'bg-zinc-900/80 border border-zinc-700 text-zinc-300 rounded-lg w-full text-center text-xs font-mono tracking-wide shadow-md' : 'bg-transparent text-zinc-200'}`}>
                   {m.role === 'user' ? (
-                    <div className="whitespace-pre-wrap break-words text-[15px] leading-relaxed">
-                      {m.content}
+                    <div className="whitespace-pre-wrap break-words text-[15px] leading-relaxed prose prose-invert">
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>{displayContent}</ReactMarkdown>
                     </div>
                   ) : (
                     <div className="prose prose-invert max-w-none text-[15px] leading-relaxed break-words overflow-hidden">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>{m.content}</ReactMarkdown>
+                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>{displayContent}</ReactMarkdown>
                     </div>
                   )}
                   {m.id && m.id !== 'temp' && m.role !== 'system' && (
@@ -501,7 +505,7 @@ export default function DialogTreeHome() {
                   )}
                 </div>
               </div>
-            ))
+            )})
           )}
           {loading && (<div className="flex gap-3 items-center text-zinc-400 text-sm bg-zinc-900/50 w-max px-4 py-2 rounded-full border border-zinc-800/50"><Loader2 size={16} className="animate-spin text-indigo-500" /> <span>AI is thinking...</span></div>)}
         </div>
@@ -509,13 +513,11 @@ export default function DialogTreeHome() {
         <div className="p-6 pt-2 shrink-0">
           <div className="max-w-4xl mx-auto relative group flex items-end gap-3 bg-zinc-900 border border-zinc-800 rounded-3xl p-2 shadow-xl focus-within:border-indigo-500/50 focus-within:ring-1 focus-within:ring-indigo-500/50 transition-all">
             
-            {/* 🔥 UPGRADED: Added image/* to accepted files */}
             <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.md,.js,.ts,.py,.json,.html,.css,.csv,.pdf,image/*" />
             
             <button onClick={() => fileInputRef.current?.click()} className="p-3.5 bg-zinc-800/50 rounded-2xl text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800 transition-all mb-1"><Paperclip size={20} /></button>
             <div className="relative flex-1 flex flex-col justify-end min-w-0">
               
-              {/* 🔥 UPGRADED: Image Thumbnails vs File Pills */}
               {selectedFiles.length > 0 && (
                  <div className="flex flex-wrap gap-2 mb-3">
                     {selectedFiles.map((file, idx) => (
