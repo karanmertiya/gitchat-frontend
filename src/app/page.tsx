@@ -158,7 +158,6 @@ export default function DialogTreeHome() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'chitchat_messages' }, () => {
         api.getChitchat(workspace.id).then(res => setChitchatMsgs(res.messages || []));
       })
-      // 🔥 FIX: ADDED "schema: 'public'" HERE TO SATISFY TYPESCRIPT!
       .on('postgres_changes', { event: '*', schema: 'public', table: 'branches' }, () => {
         api.getBranches(workspace.id).then(res => setBranches(res.branches || []));
       })
@@ -389,7 +388,9 @@ export default function DialogTreeHome() {
               </div>
               <div className="flex gap-3 mb-6">
                 <button onClick={() => handleOAuth('google')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Globe size={16} className="text-zinc-400" /> Google</button>
-                <button onClick={() => handleOAuth('github')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Github size={16} className="text-zinc-400" /> GitHub</button>
+                
+                {/* 🔥 FIX: REPLACED WITH GitCommit */}
+                <button onClick={() => handleOAuth('github')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><GitCommit size={16} className="text-zinc-400" /> GitHub</button>
               </div>
               <div className="relative flex items-center py-4 mb-2">
                 <div className="flex-grow border-t border-zinc-800"></div><span className="flex-shrink-0 mx-4 text-zinc-500 text-xs uppercase tracking-widest">Or continue with email</span><div className="flex-grow border-t border-zinc-800"></div>
@@ -505,7 +506,6 @@ export default function DialogTreeHome() {
                         placeholder="ghp_xxxxxxxxxxxx" 
                         className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" 
                     />
-                    {/* 🔥 ADDED CLEAR INSTRUCTIONS ON LOCAL STORAGE SAFETY */}
                     <p className="text-[10px] text-zinc-500 mt-1">Needs 'repo' scope. 🔒 Saved permanently in your browser's Local Storage, never to our database.</p>
                 </div>
                 <div className="bg-zinc-950/50 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-400">
