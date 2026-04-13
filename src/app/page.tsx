@@ -127,7 +127,7 @@ export default function DialogTreeHome() {
       }
     };
     setup();
-  }, [session]);
+  }, [session?.user?.id]);
 
   useEffect(() => {
     const loadHistory = async () => {
