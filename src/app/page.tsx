@@ -37,8 +37,6 @@ export default function DialogTreeHome() {
   const [chitchatLoading, setChitchatLoading] = useState(false);
 
   const [forkModal, setForkModal] = useState({ isOpen: false, messageId: null as string | null, name: "", isEphemeral: true });
-  
-  // 🔥 NEW: Pull Request Modal State
   const [prModalOpen, setPrModalOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -200,7 +198,6 @@ export default function DialogTreeHome() {
     try { await api.toggleEphemeral(activeBranch.id); } catch (err) {}
   };
 
-  // 🔥 NEW: Triggers the PR Modal instead of blind merging
   const initiateMerge = () => {
     if (!activeBranch || activeBranch.name === 'main') { 
         alert("You are already in the main timeline! You must be in a branch to merge."); 
@@ -209,7 +206,6 @@ export default function DialogTreeHome() {
     setPrModalOpen(true);
   };
 
-  // 🔥 UPGRADED: The actual merge execution
   const confirmMerge = async () => {
     const mainBranch = branches.find(b => b.name === 'main');
     const latestSourceMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
@@ -259,7 +255,6 @@ export default function DialogTreeHome() {
     document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
   };
 
-  // 🔥 UPGRADED: Generates a clean Markdown String
   const generateMarkdownString = () => {
     const date = new Date().toLocaleDateString();
     let mdContent = `# Timeline Export: ${activeBranch?.name || 'Workspace'}\n**Date:** ${date}\n\n---\n\n`;
@@ -272,7 +267,6 @@ export default function DialogTreeHome() {
     return mdContent;
   };
 
-  // 🔥 NEW: Markdown Download
   const exportMD = () => {
     if (!activeBranch || messages.length === 0) return;
     const blob = new Blob([generateMarkdownString()], { type: 'text/markdown' });
@@ -283,12 +277,10 @@ export default function DialogTreeHome() {
     setExportMenuOpen(false);
   };
 
-  // 🔥 NEW: Beautiful PDF Print Engine (Zero dependencies!)
   const exportPDF = () => {
     if (!activeBranch || messages.length === 0) return;
     const mdContent = generateMarkdownString();
     
-    // We open a hidden print window and inject a lightweight markdown parser (marked.js) and GitHub styling
     const printWindow = window.open('', '_blank');
     if (!printWindow) { alert("Please allow pop-ups to generate the PDF."); return; }
 
@@ -312,7 +304,6 @@ export default function DialogTreeHome() {
             <script>
                 const rawMd = \`${mdContent.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`;
                 document.getElementById('content').innerHTML = marked.parse(rawMd);
-                // Trigger print dialog as soon as it renders
                 setTimeout(() => { window.print(); window.close(); }, 500);
             </script>
         </body>
@@ -360,6 +351,16 @@ export default function DialogTreeHome() {
         </div>
       ) : (<code className="bg-zinc-800 text-indigo-300 px-1.5 py-0.5 rounded-md text-[13px]" {...props}>{children}</code>)
     }
+  };
+
+  // 🔥 RESTORED FUNCTION
+  const getBranchDepth = (branch: any) => {
+    let depth = 0; let curr = branch;
+    while (curr.parent_branch_id) {
+        depth++;
+        curr = branches.find(b => b.id === curr.parent_branch_id) || {};
+    }
+    return depth;
   };
 
   const extractAllArtifacts = () => {
@@ -490,7 +491,7 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* 🔥 NEW: VISUAL PULL REQUEST MODAL */}
+      {/* PR MERGE MODAL */}
       {prModalOpen && (
         <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-6">
           <div className="bg-zinc-950 border border-zinc-700 rounded-2xl w-full max-w-4xl max-h-[85vh] shadow-2xl flex flex-col overflow-hidden">
@@ -602,7 +603,6 @@ export default function DialogTreeHome() {
           </div>
           <div className="flex items-center gap-3">
             
-            {/* 🔥 NEW: Clean Export Dropdown */}
             <div className="relative">
                <button onClick={() => setExportMenuOpen(!exportMenuOpen)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-900 transition-all text-xs font-medium" title="Export this timeline">
                   <DownloadCloud size={14} /> Export <ChevronDown size={12} className={`transition-transform ${exportMenuOpen ? 'rotate-180' : ''}`}/>
@@ -628,7 +628,6 @@ export default function DialogTreeHome() {
 
             {activeBranch?.is_ephemeral && (<button onClick={makePermanent} className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-amber-900/30 border border-amber-700 hover:bg-amber-900/50 text-amber-300 text-xs font-medium transition-all"><Save size={14} /> Make Permanent</button>)}
             
-            {/* 🔥 UPGRADED: Merge Button now triggers the PR Modal */}
             <button onClick={initiateMerge} className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-emerald-900/50 hover:bg-emerald-900/20 text-xs font-medium transition-all text-emerald-400 bg-zinc-900 shadow-sm"><GitMerge size={14} /> Merge Request</button>
           </div>
         </header>
