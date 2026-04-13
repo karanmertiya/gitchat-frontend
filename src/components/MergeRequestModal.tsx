@@ -1,6 +1,7 @@
+"use client";
 import React from 'react';
 import { GitMerge, X, GitBranch, Loader2, File } from 'lucide-react';
-import { computeLineDiff } from '@/lib/utils';
+import { computeLineDiff } from '@/lib/dialogUtils';
 
 export default function MergeRequestModal({ 
     isOpen, onClose, onConfirm, activeBranch, 
@@ -27,7 +28,7 @@ export default function MergeRequestModal({
            {isDiffLoading ? (
                <div className="flex flex-col items-center justify-center py-12 text-zinc-500 gap-3">
                    <Loader2 size={24} className="animate-spin text-emerald-500" />
-                   <p className="text-sm">Analyzing line-by-line differences against main...</p>
+                   <p className="text-sm">Analyzing side-by-side differences against main...</p>
                </div>
            ) : (
                <div>
@@ -50,14 +51,32 @@ export default function MergeRequestModal({
                                    if (line.type === 'unchanged') {
                                        sbsRows.push({ leftNum: lLine++, leftCode: line.value, leftType: 'unchanged', rightNum: rLine++, rightCode: line.value, rightType: 'unchanged' });
                                    } else if (line.type === 'removed') {
-                                       if (i + 1 < diffLines.length && diffLines[i+1].type === 'added') {
-                                           sbsRows.push({ leftNum: lLine++, leftCode: line.value, leftType: 'removed', rightNum: rLine++, rightCode: diffLines[i+1].value, rightType: 'added' });
-                                           i++; 
-                                       } else {
-                                           sbsRows.push({ leftNum: lLine++, leftCode: line.value, leftType: 'removed', rightNum: null, rightCode: '', rightType: 'empty' });
+                                       let removedChunk = [];
+                                       while(i < diffLines.length && diffLines[i].type === 'removed') removedChunk.push(diffLines[i++]);
+                                       let addedChunk = [];
+                                       while(i < diffLines.length && diffLines[i].type === 'added') addedChunk.push(diffLines[i++]);
+                                       i--; 
+
+                                       const maxLen = Math.max(removedChunk.length, addedChunk.length);
+                                       for(let k=0; k<maxLen; k++) {
+                                           const rLineObj = removedChunk[k];
+                                           const aLineObj = addedChunk[k];
+                                           sbsRows.push({
+                                               leftNum: rLineObj ? lLine++ : null,
+                                               leftCode: rLineObj ? rLineObj.value : '',
+                                               leftType: rLineObj ? 'removed' : 'empty',
+                                               rightNum: aLineObj ? rLine++ : null,
+                                               rightCode: aLineObj ? aLineObj.value : '',
+                                               rightType: aLineObj ? 'added' : 'empty'
+                                           });
                                        }
                                    } else if (line.type === 'added') {
-                                       sbsRows.push({ leftNum: null, leftCode: '', leftType: 'empty', rightNum: rLine++, rightCode: line.value, rightType: 'added' });
+                                       let addedChunk = [];
+                                       while(i < diffLines.length && diffLines[i].type === 'added') addedChunk.push(diffLines[i++]);
+                                       i--;
+                                       for(let k=0; k<addedChunk.length; k++) {
+                                           sbsRows.push({ leftNum: null, leftCode: '', leftType: 'empty', rightNum: rLine++, rightCode: addedChunk[k].value, rightType: 'added' });
+                                       }
                                    }
                                }
                            }
@@ -70,34 +89,28 @@ export default function MergeRequestModal({
                                          isUnchanged ? <span className="text-[10px] text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded font-medium border border-zinc-700">Unchanged</span> :
                                          <span className="text-[10px] text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded font-medium border border-amber-400/20">Modified</span>}
                                     </div>
-                                    <div className="overflow-x-auto w-full bg-[#0d1117]">
+                                    <div className="overflow-y-auto max-h-[60vh] w-full bg-[#0d1117]">
                                         {oldArt && !isUnchanged ? (
-                                            <div className="flex w-full min-w-max text-[12px] font-mono leading-relaxed divide-x divide-zinc-800">
-                                                <div className="w-1/2 flex flex-col pb-4">
-                                                    <div className="sticky top-0 bg-[#2a1315]/90 text-red-400/80 text-[10px] uppercase tracking-widest px-4 py-2 border-b border-zinc-800/50 backdrop-blur-md z-10 font-sans">Main Branch (Old)</div>
-                                                    <div className="pt-2">
-                                                        {sbsRows.map((r, i) => (
-                                                            <div key={`l-${i}`} className={`flex px-2 hover:bg-zinc-800/30 ${r.leftType === 'removed' ? 'bg-red-900/30 text-red-300' : 'text-zinc-400'} ${r.leftType === 'empty' ? 'bg-[#0d1117] select-none' : ''}`}>
-                                                                <span className="w-10 shrink-0 text-zinc-600 text-right pr-4 select-none opacity-50">{r.leftNum || ''}</span>
-                                                                <span className="whitespace-pre">{r.leftCode}</span>
-                                                            </div>
-                                                        ))}
-                                                    </div>
+                                            <div className="flex flex-col min-w-full text-[12px] font-mono leading-relaxed">
+                                                <div className="flex w-full sticky top-0 z-10 divide-x divide-zinc-800 shadow-md">
+                                                    <div className="w-1/2 bg-[#2a1315] text-red-400/80 px-4 py-2 border-b border-zinc-800 uppercase tracking-widest font-sans font-bold text-[10px]">Main Branch (Old)</div>
+                                                    <div className="w-1/2 bg-[#102a1b] text-emerald-400/80 px-4 py-2 border-b border-zinc-800 uppercase tracking-widest font-sans font-bold text-[10px]">This Timeline (New)</div>
                                                 </div>
-                                                <div className="w-1/2 flex flex-col pb-4">
-                                                    <div className="sticky top-0 bg-[#102a1b]/90 text-emerald-400/80 text-[10px] uppercase tracking-widest px-4 py-2 border-b border-zinc-800/50 backdrop-blur-md z-10 font-sans">This Timeline (New)</div>
-                                                    <div className="pt-2">
-                                                        {sbsRows.map((r, i) => (
-                                                            <div key={`r-${i}`} className={`flex px-2 hover:bg-zinc-800/30 ${r.rightType === 'added' ? 'bg-emerald-900/30 text-emerald-300' : 'text-zinc-300'} ${r.rightType === 'empty' ? 'bg-[#0d1117] select-none' : ''}`}>
-                                                                <span className="w-10 shrink-0 text-zinc-600 text-right pr-4 select-none opacity-50">{r.rightNum || ''}</span>
-                                                                <span className="whitespace-pre">{r.rightCode}</span>
-                                                            </div>
-                                                        ))}
+                                                {sbsRows.map((r, i) => (
+                                                    <div key={i} className="flex w-full divide-x divide-zinc-800 hover:bg-zinc-800/50">
+                                                        <div className={`w-1/2 flex px-2 py-0.5 ${r.leftType === 'removed' ? 'bg-red-900/30 text-red-300' : 'text-zinc-400'} ${r.leftType === 'empty' ? 'bg-[#0d1117] select-none' : ''}`}>
+                                                            <span className="w-10 shrink-0 text-zinc-600 text-right pr-3 select-none opacity-50 border-r border-zinc-800/50 mr-3">{r.leftNum || ''}</span>
+                                                            <span className="whitespace-pre-wrap break-all w-full">{r.leftCode}</span>
+                                                        </div>
+                                                        <div className={`w-1/2 flex px-2 py-0.5 ${r.rightType === 'added' ? 'bg-emerald-900/30 text-emerald-300' : 'text-zinc-300'} ${r.rightType === 'empty' ? 'bg-[#0d1117] select-none' : ''}`}>
+                                                            <span className="w-10 shrink-0 text-zinc-600 text-right pr-3 select-none opacity-50 border-r border-zinc-800/50 mr-3">{r.rightNum || ''}</span>
+                                                            <span className="whitespace-pre-wrap break-all w-full">{r.rightCode}</span>
+                                                        </div>
                                                     </div>
-                                                </div>
+                                                ))}
                                             </div>
                                         ) : (
-                                            <div className={`p-4 font-mono text-[12px] text-zinc-300 whitespace-pre ${isNew ? "bg-[#102a1b]/10" : ""}`}>
+                                            <div className={`p-4 font-mono text-[12px] text-zinc-300 whitespace-pre-wrap break-words ${isNew ? "bg-[#102a1b]/10" : ""}`}>
                                                 {art.code}
                                             </div>
                                         )}

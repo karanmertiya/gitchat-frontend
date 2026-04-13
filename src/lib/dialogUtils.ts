@@ -2,7 +2,7 @@ export const getBranchDepth = (branch: any, branches: any[]) => {
   let depth = 0; let curr = branch;
   while (curr.parent_branch_id) {
       depth++;
-      curr = branches.find(b => b.id === curr.parent_branch_id) || {};
+      curr = branches.find((b: any) => b.id === curr.parent_branch_id) || {};
   }
   return depth;
 };
@@ -44,6 +44,24 @@ export const downloadCode = (codeToDownload: string, filename: string) => {
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
 };
 
+export const downloadAllArtifacts = async (artifacts: any[], branchName: string) => {
+    try {
+        const JSZip = (await import('jszip')).default;
+        const zip = new JSZip();
+        artifacts.forEach(art => {
+            zip.file(art.filename, art.code);
+        });
+        const content = await zip.generateAsync({ type: "blob" });
+        const url = URL.createObjectURL(content);
+        const a = document.createElement('a');
+        a.href = url; 
+        a.download = `artifacts_${branchName || 'workspace'}.zip`;
+        document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    } catch (e) {
+        alert("Failed to create ZIP. Make sure you ran 'npm install jszip'");
+    }
+};
+
 export const extractAllArtifacts = (msgs: any[]) => {
   const allArtifacts: { code: string, lang: string, filename: string, msgIndex: number }[] = [];
   const ticks = ['`', '`', '`'].join('');
@@ -61,18 +79,28 @@ export const extractAllArtifacts = (msgs: any[]) => {
            
            if (!filename) {
                const firstLine = code.split('\n')[0] || '';
-               const nameMatch = firstLine.match(/^(?:\/\/#|\/\/|#|--)\s*(?:filename\s*[:=]\s*)?(.+\.\w+)/i);
-               
+               // Your exact injected custom Regex:
+               const nameMatch = firstLine.match(/^(?:\/\/#|\/\/|#|--)\s*(?:filename\s*[:=]\s*)?([\w.-]+\.\w+)/i);
                if (nameMatch && nameMatch[1]) {
                    filename = nameMatch[1].trim();
                    const newlineIndex = code.indexOf('\n');
-                   if (newlineIndex !== -1) {
-                       code = code.substring(newlineIndex + 1).trim();
-                   }
-               } else {
-                   filename = `snippet_${idx}_${allArtifacts.length}.${lang === 'text' ? 'txt' : lang}`;
+                   if (newlineIndex !== -1) code = code.substring(newlineIndex + 1).trim();
                }
            }
+
+           if (!filename) {
+               const ext = lang === 'text' ? 'txt' : lang.replace('javascript', 'js').replace('typescript', 'ts').replace('python', 'py');
+               if (lang === 'html' || code.toLowerCase().includes('<!doctype html>') || code.toLowerCase().includes('<html')) {
+                   filename = 'index.html';
+               } else {
+                   const classMatch = code.match(/class\s+([A-Z][a-zA-Z0-9_]*)/);
+                   const funcMatch = code.match(/(?:function|const|let)\s+([a-zA-Z0-9_]+)/);
+                   if (classMatch && classMatch[1]) filename = `${classMatch[1]}.${ext}`;
+                   else if (funcMatch && funcMatch[1]) filename = `${funcMatch[1]}.${ext}`;
+                   else filename = `snippet_${idx}_${allArtifacts.length + 1}.${ext}`;
+               }
+           }
+
            allArtifacts.push({ lang, filename, code, msgIndex: idx });
         }
      }
