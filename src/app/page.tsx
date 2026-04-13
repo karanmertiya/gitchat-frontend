@@ -277,6 +277,7 @@ export default function DialogTreeHome() {
     setExportMenuOpen(false);
   };
 
+  // 🔥 UPGRADED: Bulletproof PDF Exporter that uses a hidden textarea to prevent string escaping crashes
   const exportPDF = () => {
     if (!activeBranch || messages.length === 0) return;
     const mdContent = generateMarkdownString();
@@ -284,28 +285,35 @@ export default function DialogTreeHome() {
     const printWindow = window.open('', '_blank');
     if (!printWindow) { alert("Please allow pop-ups to generate the PDF."); return; }
 
+    const escapedMd = mdContent.replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
     printWindow.document.write(`
+        <!DOCTYPE html>
         <html>
         <head>
             <title>Timeline Export: ${activeBranch.name}</title>
-            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-light.min.css">
-            <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+            <link rel="stylesheet" href="[https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-light.min.css](https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-light.min.css)">
             <style>
                 body { padding: 40px; background: white; }
                 .markdown-body { box-sizing: border-box; min-width: 200px; max-width: 980px; margin: 0 auto; font-family: -apple-system, sans-serif; }
-                @media print {
-                    body { padding: 0; }
-                    .markdown-body { max-width: 100%; }
-                }
+                @media print { body { padding: 0; } .markdown-body { max-width: 100%; } }
             </style>
         </head>
         <body>
-            <article class="markdown-body" id="content">Loading...</article>
+            <textarea id="raw-md" style="display:none;">${escapedMd}</textarea>
+            <article class="markdown-body" id="content">Building PDF... Please wait.</article>
             <script>
-                const rawMd = \`${mdContent.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`;
-                document.getElementById('content').innerHTML = marked.parse(rawMd);
-                setTimeout(() => { window.print(); window.close(); }, 500);
+                function renderPDF() {
+                    try {
+                        const md = document.getElementById('raw-md').value;
+                        document.getElementById('content').innerHTML = marked.parse(md);
+                        setTimeout(() => { window.print(); window.close(); }, 500);
+                    } catch(e) {
+                        document.getElementById('content').innerHTML = "Failed to render PDF: " + e.message;
+                    }
+                }
             </script>
+            <script src="[https://cdn.jsdelivr.net/npm/marked/marked.min.js](https://cdn.jsdelivr.net/npm/marked/marked.min.js)" onload="renderPDF()"></script>
         </body>
         </html>
     `);
@@ -353,7 +361,6 @@ export default function DialogTreeHome() {
     }
   };
 
-  // 🔥 RESTORED FUNCTION
   const getBranchDepth = (branch: any) => {
     let depth = 0; let curr = branch;
     while (curr.parent_branch_id) {
@@ -367,10 +374,11 @@ export default function DialogTreeHome() {
     const allArtifacts: { code: string, lang: string, msgIndex: number }[] = [];
     messages.forEach((m, idx) => {
        if (m.role === 'ai' || m.role === 'system') {
-          const regex = /```(\w+)\n([\s\S]*?)```/g;
+          // 🔥 UPGRADED: More forgiving regex to catch slightly malformed AI code blocks
+          const regex = /```([a-zA-Z0-9_+-]*)\s*\n([\s\S]*?)```/g;
           let match;
           while ((match = regex.exec(m.content)) !== null) {
-             allArtifacts.push({ lang: match[1], code: match[2].trim(), msgIndex: idx });
+             allArtifacts.push({ lang: match[1] || 'text', code: match[2].trim(), msgIndex: idx });
           }
        }
     });
