@@ -1,14 +1,19 @@
 "use client";
-import React, { useState, useEffect, useRef } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, MessageCircle, Share2, Download, Trash2, User, Library, DownloadCloud, ChevronDown } from 'lucide-react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, MessageCircle, Share2, Download, Trash2, User, Library, DownloadCloud, ChevronDown, Github } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 
-// 🔥 Import modularized tools and components
+// 🔥 NEW: Highlighters and Editor
+import Editor from "@monaco-editor/react";
+import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
+import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
+
 import { getBranchDepth, downloadCode, downloadAllArtifacts, extractAllArtifacts, exportMD, exportPDF } from '@/lib/dialogUtils';
 import MergeRequestModal from '@/components/MergeRequestModal';
+
 export default function DialogTreeHome() {
   const [session, setSession] = useState<any>(null);
   const [isInitializing, setIsInitializing] = useState(true);
@@ -30,7 +35,14 @@ export default function DialogTreeHome() {
   const [activeBranch, setActiveBranch] = useState<any>(null);
   const [branches, setBranches] = useState<any[]>([]);
 
+  // 🔥 NEW STATE: Resizable Editor and GitHub Modal
   const [activeArtifact, setActiveArtifact] = useState<{code: string, lang: string, filename: string} | null>(null);
+  const [editorWidth, setEditorWidth] = useState(45); // Start at 45% width
+  const [githubModalOpen, setGithubModalOpen] = useState(false);
+  const [githubRepo, setGithubRepo] = useState("");
+  const [githubCommitMsg, setGithubCommitMsg] = useState("");
+  const [githubPushing, setGithubPushing] = useState(false);
+
   const [isArtifactSidebarOpen, setIsArtifactSidebarOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
   
@@ -40,12 +52,28 @@ export default function DialogTreeHome() {
   const [chitchatLoading, setChitchatLoading] = useState(false);
 
   const [forkModal, setForkModal] = useState({ isOpen: false, messageId: null as string | null, name: "", isEphemeral: true });
-  
   const [prModalOpen, setPrModalOpen] = useState(false);
   const [mainArtifacts, setMainArtifacts] = useState<{code: string, lang: string, filename: string}[]>([]);
   const [isDiffLoading, setIsDiffLoading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // 🔥 DRAG TO RESIZE LOGIC
+  const startResizing = useCallback((mouseDownEvent: React.MouseEvent) => {
+    const startWidth = editorWidth;
+    const startPos = mouseDownEvent.clientX;
+    const onMouseMove = (mouseMoveEvent: MouseEvent) => {
+        const diff = startPos - mouseMoveEvent.clientX;
+        const newWidth = startWidth + (diff / window.innerWidth) * 100;
+        setEditorWidth(Math.max(20, Math.min(80, newWidth))); // Clamp between 20% and 80%
+    };
+    const onMouseUp = () => {
+        document.removeEventListener("mousemove", onMouseMove);
+        document.removeEventListener("mouseup", onMouseUp);
+    };
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [editorWidth]);
 
   useEffect(() => {
     supabase.auth.getSession().then(({ data: { session } }) => {
@@ -132,11 +160,7 @@ export default function DialogTreeHome() {
         const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
         if (error) throw error;
       }
-    } catch (error: any) {
-      setAuthError(error.message);
-    } finally {
-      setAuthLoading(false);
-    }
+    } catch (error: any) { setAuthError(error.message); } finally { setAuthLoading(false); }
   };
 
   const handleOAuth = async (provider: 'google' | 'github') => { await supabase.auth.signInWithOAuth({ provider }); };
@@ -165,18 +189,14 @@ export default function DialogTreeHome() {
     } catch (err: any) {
       setMessages(prev => prev.filter(m => m.id !== 'temp'));
       alert(`Failed to get AI response: \n\n${err.message}`);
-    } finally {
-      setLoading(false);
-    }
+    } finally { setLoading(false); }
   };
 
   const submitFork = async () => {
     if (!forkModal.name.trim() || !forkModal.messageId) return;
     setLoading(true); setForkModal(prev => ({ ...prev, isOpen: false })); 
-    try {
-      await api.branch(workspace.id, forkModal.name, forkModal.isEphemeral, forkModal.messageId, activeBranch.id);
-    } catch (err) { alert("Failed to create new timeline."); } 
-    finally { setLoading(false); }
+    try { await api.branch(workspace.id, forkModal.name, forkModal.isEphemeral, forkModal.messageId, activeBranch.id); } 
+    catch (err) { alert("Failed to create new timeline."); } finally { setLoading(false); }
   };
 
   const deleteBranch = async (branchId: string, e: React.MouseEvent) => {
@@ -195,18 +215,14 @@ export default function DialogTreeHome() {
 
   const initiateMerge = async () => {
     if (!activeBranch || activeBranch.name === 'main') { 
-        alert("You are already in the main timeline! You must be in a branch to merge."); 
-        return; 
+        alert("You are already in the main timeline! You must be in a branch to merge."); return; 
     }
-    setPrModalOpen(true);
-    setIsDiffLoading(true);
+    setPrModalOpen(true); setIsDiffLoading(true);
     try {
         const mainBranch = branches.find(b => b.name === 'main');
         if (mainBranch) {
             const res = await api.getMessages(mainBranch.id);
-            if (res.messages) {
-                setMainArtifacts(extractAllArtifacts(res.messages));
-            }
+            if (res.messages) setMainArtifacts(extractAllArtifacts(res.messages));
         }
     } catch (err) {}
     setIsDiffLoading(false);
@@ -216,19 +232,32 @@ export default function DialogTreeHome() {
     const mainBranch = branches.find(b => b.name === 'main');
     const latestSourceMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
     if (!mainBranch || !latestSourceMsgId) return;
-
-    setLoading(true);
-    setPrModalOpen(false);
+    setLoading(true); setPrModalOpen(false);
     try {
       const res = await api.merge(activeBranch.id, mainBranch.id, latestSourceMsgId, null, messages);
       if(res.error) throw new Error(res.error);
       await api.deleteBranch(activeBranch.id);
       setActiveBranch(mainBranch); 
-    } catch(e: any) {
-      alert(`Merge failed: ${e.message}`);
-    } finally {
-      setLoading(false);
-    }
+    } catch(e: any) { alert(`Merge failed: ${e.message}`); } finally { setLoading(false); }
+  };
+
+  // 🔥 GITHUB PUSH ACTION
+  const executeGithubPush = async () => {
+      if (!githubRepo || !githubCommitMsg || !activeArtifact) {
+          alert("Please fill in repository and commit message!"); return;
+      }
+      setGithubPushing(true);
+      try {
+          const res = await api.pushToGithub(githubRepo, activeBranch?.name || 'main', activeArtifact.filename, activeArtifact.code, githubCommitMsg);
+          if (res.error) throw new Error(res.error);
+          alert("Successfully pushed to GitHub!");
+          setGithubModalOpen(false);
+          setGithubCommitMsg("");
+      } catch (err: any) {
+          alert("GitHub Push Failed. Is your Backend PAT configured correctly?\n\nError: " + err.message);
+      } finally {
+          setGithubPushing(false);
+      }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -240,9 +269,7 @@ export default function DialogTreeHome() {
     const newFiles = await Promise.all(files.map(file => {
       return new Promise<{name: string, base64: string, type: string, ext: string}>((resolve) => {
         const reader = new FileReader();
-        reader.onloadend = () => {
-          resolve({ name: file.name, base64: reader.result as string, type: file.type, ext: file.name.split('.').pop() || 'txt' });
-        };
+        reader.onloadend = () => resolve({ name: file.name, base64: reader.result as string, type: file.type, ext: file.name.split('.').pop() || 'txt' });
         reader.readAsDataURL(file);
       });
     }));
@@ -274,16 +301,24 @@ export default function DialogTreeHome() {
     }
   };
 
+  // 🔥 VS CODE SYNTAX HIGHLIGHTING FOR CHAT
   const MarkdownComponents = {
     code({node, inline, className, children, ...props}: any) {
       const match = /language-(\w+)/.exec(className || '');
       const codeString = String(children).replace(/\n$/, '');
       return !inline && match ? (
-        <div className="relative group mt-4 mb-4">
-          <div className="absolute top-0 right-0 p-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-            <button onClick={() => setActiveArtifact({ code: codeString, lang: match[1], filename: 'snippet' })} className="flex items-center gap-2 bg-indigo-600 hover:bg-indigo-500 text-white text-xs px-3 py-1.5 rounded-lg shadow-lg transition-all"><Code size={14}/> Open in Editor</button>
+        <div className="relative group my-5 rounded-xl overflow-hidden border border-zinc-800 shadow-2xl">
+          <div className="flex items-center justify-between px-4 py-2 bg-[#1e1e1e] border-b border-zinc-800/50">
+             <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">{match[1]}</span>
+             <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
+               <button onClick={() => navigator.clipboard.writeText(codeString)} className="text-zinc-400 hover:text-zinc-200 text-xs">Copy</button>
+               <button onClick={() => setActiveArtifact({ code: codeString, lang: match[1], filename: 'snippet' })} className="text-indigo-400 hover:text-indigo-300 text-xs font-semibold ml-2 flex items-center gap-1"><Code size={12}/> Edit</button>
+             </div>
           </div>
-          <pre className="bg-zinc-950 border border-zinc-800 rounded-xl p-4 overflow-x-auto text-[13px] leading-relaxed"><code className={className} {...props}>{children}</code></pre>
+          {/* @ts-ignore */}
+          <SyntaxHighlighter language={match[1]} style={vscDarkPlus} customStyle={{margin: 0, padding: '1rem', fontSize: '13px', backgroundColor: '#0d1117'}}>
+            {codeString}
+          </SyntaxHighlighter>
         </div>
       ) : (<code className="bg-zinc-800 text-indigo-300 px-1.5 py-0.5 rounded-md text-[13px]" {...props}>{children}</code>)
     }
@@ -325,7 +360,7 @@ export default function DialogTreeHome() {
               </div>
               <div className="flex gap-3 mb-6">
                 <button onClick={() => handleOAuth('google')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Globe size={16} className="text-zinc-400" /> Google</button>
-                <button onClick={() => handleOAuth('github')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Code size={16} className="text-zinc-400" /> GitHub</button>
+                <button onClick={() => handleOAuth('github')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Github size={16} className="text-zinc-400" /> GitHub</button>
               </div>
               <div className="relative flex items-center py-4 mb-2">
                 <div className="flex-grow border-t border-zinc-800"></div><span className="flex-shrink-0 mx-4 text-zinc-500 text-xs uppercase tracking-widest">Or continue with email</span><div className="flex-grow border-t border-zinc-800"></div>
@@ -403,7 +438,39 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* 🔥 MODULAR PR MERGE MODAL */}
+      {/* GITHUB PUSH MODAL */}
+      {githubModalOpen && activeArtifact && (
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-bold flex items-center gap-2"><Github size={20} className="text-white"/> Commit to GitHub</h2>
+                <button onClick={() => setGithubModalOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={20}/></button>
+            </div>
+            <div className="space-y-4 mb-6">
+                <div>
+                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Repository (owner/repo)</label>
+                    <input type="text" value={githubRepo} onChange={e => setGithubRepo(e.target.value)} placeholder="e.g. karanmertiya/dialogtree" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
+                </div>
+                <div>
+                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Commit Message</label>
+                    <input type="text" value={githubCommitMsg} onChange={e => setGithubCommitMsg(e.target.value)} placeholder={`Update ${activeArtifact.filename}`} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
+                </div>
+                <div className="bg-zinc-950/50 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-400">
+                    <span className="font-semibold text-indigo-400">Branch:</span> {activeBranch?.name || 'main'} <br/>
+                    <span className="font-semibold text-indigo-400">File:</span> {activeArtifact.filename}
+                </div>
+            </div>
+            <div className="flex justify-end gap-3">
+                <button onClick={() => setGithubModalOpen(false)} className="px-4 py-2 text-sm text-zinc-400">Cancel</button>
+                <button onClick={executeGithubPush} disabled={githubPushing || !githubRepo || !githubCommitMsg} className="px-4 py-2 bg-white hover:bg-zinc-200 disabled:opacity-50 text-black rounded-lg text-sm font-semibold flex items-center gap-2">
+                    {githubPushing ? <Loader2 size={14} className="animate-spin"/> : <Github size={14}/>} Push to GitHub
+                </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MERGE REQUEST MODAL */}
       <MergeRequestModal 
         isOpen={prModalOpen} 
         onClose={() => setPrModalOpen(false)} 
@@ -415,7 +482,7 @@ export default function DialogTreeHome() {
         loading={loading} 
       />
 
-      <aside className="w-72 border-r border-zinc-800 flex flex-col bg-zinc-950/50 z-10">
+      <aside className="w-72 border-r border-zinc-800 flex flex-col bg-zinc-950/50 z-10 shrink-0">
         <div className="p-4 flex items-center justify-between mb-2">
           <div className="flex items-center gap-2"><div className="bg-indigo-600 p-1.5 rounded-lg"><GitBranch size={18} className="text-white" /></div><h1 className="font-bold text-md tracking-tight">DialogTree</h1></div>
           <button onClick={copyShareLink} className="text-zinc-500 hover:text-indigo-400 transition-colors" title="Invite Collaborators"><Share2 size={16} /></button>
@@ -556,14 +623,13 @@ export default function DialogTreeHome() {
 
       {/* ARTIFACT LIBRARY SIDEBAR */}
       {isArtifactSidebarOpen && (
-         <aside className="w-72 border-l border-zinc-800 bg-zinc-950/90 backdrop-blur-md flex flex-col shadow-2xl z-20">
+         <aside className="w-72 border-l border-zinc-800 bg-zinc-950/90 backdrop-blur-md flex flex-col shadow-2xl z-20 shrink-0">
             <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-4 bg-zinc-900/50">
                <div className="flex items-center gap-2 text-zinc-200 font-semibold text-sm"><Library size={16} className="text-indigo-400" /> Artifact Library</div>
                <button onClick={() => setIsArtifactSidebarOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={16}/></button>
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3">
                
-               {/* DOWNLOAD ALL BUTTON */}
                {timelineArtifacts.length > 0 && (
                    <button onClick={() => downloadAllArtifacts(timelineArtifacts, activeBranch?.name)} className="w-full bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-600/30 text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all mb-4">
                        <DownloadCloud size={14} /> Download All as ZIP
@@ -582,7 +648,10 @@ export default function DialogTreeHome() {
                            </div>
                         </div>
                         <div className="text-[10px] uppercase font-bold text-indigo-400/70 mb-1.5">{art.lang}</div>
-                        <div className="text-xs text-zinc-400 max-h-32 overflow-y-auto font-mono bg-zinc-950 p-2 rounded border border-zinc-800/50">{art.code}</div>
+                        <div className="text-xs text-zinc-400 max-h-32 overflow-hidden font-mono bg-zinc-950 p-2 rounded border border-zinc-800/50 relative">
+                            {art.code}
+                            <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-zinc-950 to-transparent pointer-events-none"></div>
+                        </div>
                      </div>
                   ))
                )}
@@ -590,25 +659,53 @@ export default function DialogTreeHome() {
          </aside>
       )}
 
-      {/* ARTIFACT VIEWER (SPLIT SCREEN) */}
+      {/* 🔥 NEW RESIZABLE ARTIFACT EDITOR PANELS */}
       {activeArtifact && (
-        <aside className="w-[45%] min-w-[400px] border-l border-zinc-800 bg-zinc-950 flex flex-col shadow-2xl z-30 absolute right-0 top-0 bottom-0">
-            <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900">
-                <div className="flex items-center gap-2 overflow-hidden pr-4">
-                    <Code size={18} className="text-indigo-400 shrink-0"/>
-                    <span className="text-sm font-semibold text-zinc-200 truncate">{activeArtifact.filename}</span>
-                    <span className="ml-2 text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded uppercase tracking-wider shrink-0">{activeArtifact.lang}</span>
+        <>
+            {/* The Invisible Drag Handle */}
+            <div 
+                className="w-1 cursor-col-resize bg-zinc-800 hover:bg-indigo-500 hover:shadow-[0_0_10px_rgba(99,102,241,0.5)] transition-all z-40 active:bg-indigo-400 shrink-0" 
+                onMouseDown={startResizing} 
+            />
+            
+            {/* The Monaco Editor Pane */}
+            <aside style={{ width: `${editorWidth}%` }} className="min-w-[300px] border-l border-zinc-800 bg-[#1e1e1e] flex flex-col shadow-2xl z-30 relative shrink-0 transition-none">
+                <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900 shrink-0">
+                    <div className="flex items-center gap-2 overflow-hidden pr-4">
+                        <Code size={18} className="text-indigo-400 shrink-0"/>
+                        <span className="text-sm font-semibold text-zinc-200 truncate">{activeArtifact.filename}</span>
+                        <span className="ml-2 text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded uppercase tracking-wider shrink-0">{activeArtifact.lang}</span>
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                        {/* 🔥 NEW GITHUB BUTTON */}
+                        <button onClick={() => setGithubModalOpen(true)} className="flex items-center gap-1.5 text-xs bg-white hover:bg-zinc-200 text-black font-semibold px-3 py-1.5 rounded-lg transition-colors"><Github size={14}/> Commit</button>
+                        
+                        <button onClick={() => downloadCode(activeArtifact.code, activeArtifact.filename)} className="flex items-center gap-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors"><Download size={14}/> D/L</button>
+                        <button onClick={() => navigator.clipboard.writeText(activeArtifact.code)} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors">Copy</button>
+                        <button onClick={() => setActiveArtifact(null)} className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-zinc-800 transition-colors"><X size={18}/></button>
+                    </div>
                 </div>
-                <div className="flex gap-2 shrink-0">
-                    <button onClick={() => downloadCode(activeArtifact.code, activeArtifact.filename)} className="flex items-center gap-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors"><Download size={14}/> Download</button>
-                    <button onClick={() => navigator.clipboard.writeText(activeArtifact.code)} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors">Copy</button>
-                    <button onClick={() => setActiveArtifact(null)} className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-zinc-800 transition-colors"><X size={18}/></button>
+                
+                {/* 🔥 THE MONACO EDITOR */}
+                <div className="flex-1 overflow-hidden pt-4">
+                    <Editor
+                        height="100%"
+                        language={activeArtifact.lang === 'html' ? 'html' : activeArtifact.lang === 'css' ? 'css' : activeArtifact.lang === 'python' ? 'python' : activeArtifact.lang.includes('js') ? 'javascript' : activeArtifact.lang.includes('ts') ? 'typescript' : 'plaintext'}
+                        theme="vs-dark"
+                        value={activeArtifact.code}
+                        onChange={(val) => setActiveArtifact({ ...activeArtifact, code: val || '' })}
+                        options={{
+                            minimap: { enabled: false },
+                            fontSize: 13,
+                            wordWrap: 'on',
+                            padding: { top: 16 },
+                            scrollBeyondLastLine: false,
+                            smoothScrolling: true,
+                        }}
+                    />
                 </div>
-            </div>
-            <div className="flex-1 overflow-auto p-4 bg-[#0d1117]">
-                <pre className="text-[13px] font-mono text-zinc-300 whitespace-pre">{activeArtifact.code}</pre>
-            </div>
-        </aside>
+            </aside>
+        </>
       )}
     </div>
   );

@@ -3,7 +3,6 @@ const API_BASE = process.env.NEXT_PUBLIC_API_URL;
 export const api = {
   init: (userId: string, name: string, joinId?: string | null) => fetch(`${API_BASE}/init`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ user_id: userId, workspace_name: name, join_id: joinId }) }).then(res => res.json()),
   
-  // 🔥 UPGRADED: Added the `attachments` parameter
   chat: (branchId: string, prompt: string, parentId?: string | null, frontendHistory?: any[], attachments?: any[]) => fetch(`${API_BASE}/chat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ branch_id: branchId, prompt, parent_message_id: parentId, frontendHistory, attachments }) }).then(res => res.json()),
   
   chitchat: (workspaceId: string, userName: string, prompt: string, history?: any[]) => fetch(`${API_BASE}/chitchat`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ workspace_id: workspaceId, user_name: userName, prompt, history }) }).then(res => res.json()),
@@ -14,5 +13,13 @@ export const api = {
   getBranches: (workspaceId: string) => fetch(`${API_BASE}/branches/${workspaceId}`).then(res => res.json()),
   getMessages: (branchId: string) => fetch(`${API_BASE}/messages/${branchId}`).then(res => res.json()),
   toggleEphemeral: (branchId: string) => fetch(`${API_BASE}/branch/toggle`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ branch_id: branchId }) }).then(res => res.json()),
-  merge: (sourceId: string, targetId: string, latestSourceMsgId: string, targetParentMsgId?: string | null, frontendHistory?: any[]) => fetch(`${API_BASE}/merge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source_branch_id: sourceId, target_branch_id: targetId, latest_message_id_in_source: latestSourceMsgId, parent_message_id_in_target: targetParentMsgId, frontendHistory }) }).then(res => res.json())
+  merge: (sourceId: string, targetId: string, latestSourceMsgId: string, targetParentMsgId?: string | null, frontendHistory?: any[]) => fetch(`${API_BASE}/merge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source_branch_id: sourceId, target_branch_id: targetId, latest_message_id_in_source: latestSourceMsgId, parent_message_id_in_target: targetParentMsgId, frontendHistory }) }).then(res => res.json()),
+  
+  // 🔥 NEW GITHUB INTEGRATION ENDPOINT
+  pushToGithub: (repoName: string, branchName: string, filePath: string, codeContent: string, commitMessage: string, patToken?: string) => 
+    fetch(`${API_BASE}/github/push`, { 
+      method: 'POST', 
+      headers: { 'Content-Type': 'application/json' }, 
+      body: JSON.stringify({ repo: repoName, branch: branchName, path: filePath, content: codeContent, message: commitMessage, token: patToken }) 
+    }).then(res => res.json())
 };
