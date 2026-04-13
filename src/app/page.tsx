@@ -6,10 +6,9 @@ import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 
-// 🔥 Updated import from dialogUtils
-import { getBranchDepth, downloadCode, downloadAllArtifacts, extractAllArtifacts, exportMD, exportPDF } from '@/lib/dialogUtils';
+// 🔥 Import modularized tools and components
+import { getBranchDepth, downloadCode, downloadAllArtifacts, extractAllArtifacts, exportMD, exportPDF } from '@/lib/utils';
 import MergeRequestModal from '@/components/MergeRequestModal';
-
 export default function DialogTreeHome() {
   const [session, setSession] = useState<any>(null);
   const [isInitializing, setIsInitializing] = useState(true);
