@@ -88,7 +88,7 @@ export default function DialogTreeHome() {
       if (!session) setIsInitializing(false);
     });
 
-    // 🔥 LOAD GITHUB CREDENTIALS FROM LOCAL STORAGE ON BOOT
+    // LOAD GITHUB CREDENTIALS FROM LOCAL STORAGE ON BOOT
     setGithubRepo(localStorage.getItem('dialogtree_github_repo') || "");
     setGithubToken(localStorage.getItem('dialogtree_github_token') || "");
 
@@ -158,7 +158,8 @@ export default function DialogTreeHome() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'chitchat_messages' }, () => {
         api.getChitchat(workspace.id).then(res => setChitchatMsgs(res.messages || []));
       })
-      .on('postgres_changes', { event: '*', table: 'branches' }, () => {
+      // 🔥 FIX: ADDED "schema: 'public'" HERE TO SATISFY TYPESCRIPT!
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'branches' }, () => {
         api.getBranches(workspace.id).then(res => setBranches(res.branches || []));
       })
       .subscribe();
@@ -329,6 +330,7 @@ export default function DialogTreeHome() {
     }
   };
 
+  // VS CODE SYNTAX HIGHLIGHTING FOR CHAT
   const MarkdownComponents = {
     code({node, inline, className, children, ...props}: any) {
       const match = /language-(\w+)/.exec(className || '');
@@ -387,9 +389,7 @@ export default function DialogTreeHome() {
               </div>
               <div className="flex gap-3 mb-6">
                 <button onClick={() => handleOAuth('google')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Globe size={16} className="text-zinc-400" /> Google</button>
-                
-                {/* 🔥 GITHUB ICON REPLACED WITH GITCOMMIT */}
-                <button onClick={() => handleOAuth('github')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><GitCommit size={16} className="text-zinc-400" /> GitHub</button>
+                <button onClick={() => handleOAuth('github')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Github size={16} className="text-zinc-400" /> GitHub</button>
               </div>
               <div className="relative flex items-center py-4 mb-2">
                 <div className="flex-grow border-t border-zinc-800"></div><span className="flex-shrink-0 mx-4 text-zinc-500 text-xs uppercase tracking-widest">Or continue with email</span><div className="flex-grow border-t border-zinc-800"></div>
@@ -467,7 +467,7 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* GITHUB PUSH MODAL */}
+      {/* 🔥 GITHUB PUSH MODAL (UPDATED UI) */}
       {githubModalOpen && activeArtifact && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
@@ -505,7 +505,8 @@ export default function DialogTreeHome() {
                         placeholder="ghp_xxxxxxxxxxxx" 
                         className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" 
                     />
-                    <p className="text-[10px] text-zinc-500 mt-1">Needs 'repo' scope. Tokens are securely stored in your browser.</p>
+                    {/* 🔥 ADDED CLEAR INSTRUCTIONS ON LOCAL STORAGE SAFETY */}
+                    <p className="text-[10px] text-zinc-500 mt-1">Needs 'repo' scope. 🔒 Saved permanently in your browser's Local Storage, never to our database.</p>
                 </div>
                 <div className="bg-zinc-950/50 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-400">
                     <span className="font-semibold text-indigo-400">Branch:</span> {activeBranch?.name || 'main'} <br/>
@@ -553,7 +554,6 @@ export default function DialogTreeHome() {
         
         <nav className="flex-1 px-3 overflow-y-auto">
           
-          {/* 🔥 WORKSPACES SECTION */}
           <div className="mb-6">
             <div className="text-xs font-semibold text-zinc-500 mb-2 px-2 uppercase tracking-wider flex justify-between items-center">
                 Workspaces
