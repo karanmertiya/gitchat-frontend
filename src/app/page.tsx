@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, Maximize2, MessageCircle, Share2, Download, Trash2, User, Library, DownloadCloud } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, Maximize2, MessageCircle, Share2, Download, Trash2, User, Library, DownloadCloud, ChevronDown, Check, AlertCircle } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -29,6 +29,7 @@ export default function DialogTreeHome() {
 
   const [activeArtifact, setActiveArtifact] = useState<{code: string, lang: string} | null>(null);
   const [isArtifactSidebarOpen, setIsArtifactSidebarOpen] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
   
   const [isChitchatOpen, setIsChitchatOpen] = useState(false);
   const [chitchatInput, setChitchatInput] = useState("");
@@ -36,6 +37,9 @@ export default function DialogTreeHome() {
   const [chitchatLoading, setChitchatLoading] = useState(false);
 
   const [forkModal, setForkModal] = useState({ isOpen: false, messageId: null as string | null, name: "", isEphemeral: true });
+  
+  // 🔥 NEW: Pull Request Modal State
+  const [prModalOpen, setPrModalOpen] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -53,7 +57,6 @@ export default function DialogTreeHome() {
 
   useEffect(() => {
     if (!session?.user?.id) return;
-    
     const setup = async () => {
       try {
         const urlParams = new URLSearchParams(window.location.search);
@@ -133,10 +136,7 @@ export default function DialogTreeHome() {
         }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
-        if (error) {
-            if (error.message.includes("Email not confirmed")) throw new Error("Please check your email and click the verification link.");
-            throw error;
-        }
+        if (error) throw error;
       }
     } catch (error: any) {
       setAuthError(error.message);
@@ -171,7 +171,7 @@ export default function DialogTreeHome() {
       if (data.error) throw new Error(data.error);
     } catch (err: any) {
       setMessages(prev => prev.filter(m => m.id !== 'temp'));
-      alert(`Failed to get AI response: \n\n${err.message || "Server is busy."}`);
+      alert(`Failed to get AI response: \n\n${err.message}`);
     } finally {
       setLoading(false);
     }
@@ -182,11 +182,8 @@ export default function DialogTreeHome() {
     setLoading(true); setForkModal(prev => ({ ...prev, isOpen: false })); 
     try {
       await api.branch(workspace.id, forkModal.name, forkModal.isEphemeral, forkModal.messageId, activeBranch.id);
-    } catch (err) {
-      alert("Failed to create new timeline.");
-    } finally {
-      setLoading(false);
-    }
+    } catch (err) { alert("Failed to create new timeline."); } 
+    finally { setLoading(false); }
   };
 
   const deleteBranch = async (branchId: string, e: React.MouseEvent) => {
@@ -203,19 +200,28 @@ export default function DialogTreeHome() {
     try { await api.toggleEphemeral(activeBranch.id); } catch (err) {}
   };
 
-  const handleMerge = async () => {
-    if (!activeBranch || activeBranch.name === 'main') { alert("You are already in the main timeline!"); return; }
+  // 🔥 NEW: Triggers the PR Modal instead of blind merging
+  const initiateMerge = () => {
+    if (!activeBranch || activeBranch.name === 'main') { 
+        alert("You are already in the main timeline! You must be in a branch to merge."); 
+        return; 
+    }
+    setPrModalOpen(true);
+  };
+
+  // 🔥 UPGRADED: The actual merge execution
+  const confirmMerge = async () => {
     const mainBranch = branches.find(b => b.name === 'main');
     const latestSourceMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
     if (!mainBranch || !latestSourceMsgId) return;
 
     setLoading(true);
+    setPrModalOpen(false);
     try {
       const res = await api.merge(activeBranch.id, mainBranch.id, latestSourceMsgId, null, messages);
       if(res.error) throw new Error(res.error);
       
       await api.deleteBranch(activeBranch.id);
-      alert("Branch successfully Squashed & Merged!");
       setActiveBranch(mainBranch); 
     } catch(e: any) {
       alert(`Merge failed: ${e.message}`);
@@ -236,17 +242,11 @@ export default function DialogTreeHome() {
       return new Promise<{name: string, base64: string, type: string, ext: string}>((resolve) => {
         const reader = new FileReader();
         reader.onloadend = () => {
-          resolve({ 
-            name: file.name, 
-            base64: reader.result as string, 
-            type: file.type,
-            ext: file.name.split('.').pop() || 'txt' 
-          });
+          resolve({ name: file.name, base64: reader.result as string, type: file.type, ext: file.name.split('.').pop() || 'txt' });
         };
         reader.readAsDataURL(file);
       });
     }));
-
     setSelectedFiles(prev => [...prev, ...newFiles as any]);
     if(fileInputRef.current) fileInputRef.current.value = ''; 
   };
@@ -259,31 +259,67 @@ export default function DialogTreeHome() {
     document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
   };
 
-  // 🔥 NEW: One-Click Timeline Export Engine
-  const exportTimeline = () => {
-    if (!activeBranch || messages.length === 0) return;
-    
+  // 🔥 UPGRADED: Generates a clean Markdown String
+  const generateMarkdownString = () => {
     const date = new Date().toLocaleDateString();
-    let mdContent = `# Conversation Export: ${activeBranch.name}\n**Exported on:** ${date}\n\n---\n\n`;
+    let mdContent = `# Timeline Export: ${activeBranch?.name || 'Workspace'}\n**Date:** ${date}\n\n---\n\n`;
     
     messages.forEach((m) => {
-      const roleName = m.role === 'user' ? '👤 **User**' : m.role === 'system' ? '⚙️ **System**' : '🤖 **AI**';
-      
-      // Clean up the text by stripping raw PDF dumps and replacing them with a neat citation block
+      const roleName = m.role === 'user' ? '👤 **User**' : m.role === 'system' ? '⚙️ **System**' : '🤖 **AI Assistant**';
       const cleanContent = m.content.replace(/---START_ATTACHMENT:(.*?)---[\s\S]*?---END_ATTACHMENT---/g, '> 📎 *Attached Document: `$1`*');
-      
       mdContent += `### ${roleName}\n${cleanContent}\n\n---\n\n`;
     });
+    return mdContent;
+  };
 
-    const blob = new Blob([mdContent], { type: 'text/markdown' });
+  // 🔥 NEW: Markdown Download
+  const exportMD = () => {
+    if (!activeBranch || messages.length === 0) return;
+    const blob = new Blob([generateMarkdownString()], { type: 'text/markdown' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
-    a.href = url;
-    a.download = `Timeline_${activeBranch.name}_${Date.now()}.md`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    a.href = url; a.download = `Timeline_${activeBranch.name}.md`;
+    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+    setExportMenuOpen(false);
+  };
+
+  // 🔥 NEW: Beautiful PDF Print Engine (Zero dependencies!)
+  const exportPDF = () => {
+    if (!activeBranch || messages.length === 0) return;
+    const mdContent = generateMarkdownString();
+    
+    // We open a hidden print window and inject a lightweight markdown parser (marked.js) and GitHub styling
+    const printWindow = window.open('', '_blank');
+    if (!printWindow) { alert("Please allow pop-ups to generate the PDF."); return; }
+
+    printWindow.document.write(`
+        <html>
+        <head>
+            <title>Timeline Export: ${activeBranch.name}</title>
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-light.min.css">
+            <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+            <style>
+                body { padding: 40px; background: white; }
+                .markdown-body { box-sizing: border-box; min-width: 200px; max-width: 980px; margin: 0 auto; font-family: -apple-system, sans-serif; }
+                @media print {
+                    body { padding: 0; }
+                    .markdown-body { max-width: 100%; }
+                }
+            </style>
+        </head>
+        <body>
+            <article class="markdown-body" id="content">Loading...</article>
+            <script>
+                const rawMd = \`${mdContent.replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`;
+                document.getElementById('content').innerHTML = marked.parse(rawMd);
+                // Trigger print dialog as soon as it renders
+                setTimeout(() => { window.print(); window.close(); }, 500);
+            </script>
+        </body>
+        </html>
+    `);
+    printWindow.document.close();
+    setExportMenuOpen(false);
   };
 
   const handleChitchatSend = async () => {
@@ -297,11 +333,7 @@ export default function DialogTreeHome() {
         try {
             const aiHistory = chitchatMsgs.map(m => ({ role: m.role === 'ai' ? 'model' : 'user', parts: [{ text: m.content }]}));
             await api.chitchat(workspace.id, userName, msg, aiHistory);
-        } catch (e) {
-            console.error(e);
-        } finally {
-            setChitchatLoading(false);
-        }
+        } catch (e) {} finally { setChitchatLoading(false); }
     } else {
         await api.chitchat(workspace.id, userName, msg);
     }
@@ -328,15 +360,6 @@ export default function DialogTreeHome() {
         </div>
       ) : (<code className="bg-zinc-800 text-indigo-300 px-1.5 py-0.5 rounded-md text-[13px]" {...props}>{children}</code>)
     }
-  };
-
-  const getBranchDepth = (branch: any) => {
-    let depth = 0; let curr = branch;
-    while (curr.parent_branch_id) {
-        depth++;
-        curr = branches.find(b => b.id === curr.parent_branch_id) || {};
-    }
-    return depth;
   };
 
   const extractAllArtifacts = () => {
@@ -416,6 +439,7 @@ export default function DialogTreeHome() {
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans relative overflow-hidden">
       
+      {/* FLOATING MULTIPLAYER CHITCHAT */}
       <div className="absolute bottom-6 right-6 z-50">
          {isChitchatOpen ? (
             <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-80 shadow-2xl flex flex-col h-[450px] overflow-hidden">
@@ -451,6 +475,7 @@ export default function DialogTreeHome() {
          )}
       </div>
 
+      {/* DIVERGE TIMELINE MODAL */}
       {forkModal.isOpen && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
@@ -465,6 +490,61 @@ export default function DialogTreeHome() {
         </div>
       )}
 
+      {/* 🔥 NEW: VISUAL PULL REQUEST MODAL */}
+      {prModalOpen && (
+        <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-6">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl w-full max-w-4xl max-h-[85vh] shadow-2xl flex flex-col overflow-hidden">
+            
+            <div className="p-5 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center">
+               <div>
+                  <h2 className="text-xl font-bold flex items-center gap-2 text-zinc-100"><GitMerge size={22} className="text-emerald-400"/> Open Merge Request</h2>
+                  <p className="text-sm text-zinc-400 mt-1">Review the artifacts generated in this timeline before squashing them into the main branch.</p>
+               </div>
+               <button onClick={() => setPrModalOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={24}/></button>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-6 bg-zinc-950 flex flex-col gap-6">
+               <div className="flex items-center gap-4 bg-zinc-900 p-4 rounded-xl border border-zinc-800">
+                  <div className="bg-zinc-800 text-zinc-300 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm font-mono"><GitBranch size={16} className="text-indigo-400"/> {activeBranch?.name}</div>
+                  <span className="text-zinc-500">→</span>
+                  <div className="bg-zinc-800 text-zinc-300 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm font-mono"><GitBranch size={16} className="text-zinc-400"/> main</div>
+               </div>
+
+               <div className="bg-emerald-900/10 border border-emerald-900/30 rounded-xl p-4">
+                  <h3 className="text-emerald-400 text-sm font-semibold flex items-center gap-2 mb-2"><CheckCircle2 size={16}/> Able to merge</h3>
+                  <p className="text-zinc-300 text-sm leading-relaxed">
+                     This will permanently delete the <strong>{activeBranch?.name}</strong> timeline. An AI compiler will read the {messages.length} messages in this branch, extract the final code/decisions, and inject a single cleanly formatted "Squash Commit" into your main timeline.
+                  </p>
+               </div>
+
+               <div>
+                  <h3 className="text-zinc-300 text-sm font-semibold mb-3">Artifacts to be Merged ({timelineArtifacts.length})</h3>
+                  {timelineArtifacts.length === 0 ? (
+                     <div className="text-center p-8 border border-dashed border-zinc-800 rounded-xl text-zinc-500 text-sm">No code blocks were generated in this timeline. The AI will summarize the conversation text instead.</div>
+                  ) : (
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {timelineArtifacts.map((art, idx) => (
+                           <div key={idx} className="bg-[#0d1117] border border-zinc-800 rounded-lg p-4">
+                              <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mb-2 block">{art.lang} snippet</span>
+                              <pre className="text-xs text-zinc-300 overflow-x-auto font-mono line-clamp-6">{art.code}</pre>
+                           </div>
+                        ))}
+                     </div>
+                  )}
+               </div>
+            </div>
+
+            <div className="p-5 border-t border-zinc-800 bg-zinc-900/50 flex justify-end gap-3">
+               <button onClick={() => setPrModalOpen(false)} className="px-5 py-2.5 text-sm text-zinc-400 hover:text-zinc-200 font-medium transition-colors">Cancel</button>
+               <button onClick={confirmMerge} disabled={loading} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-sm font-semibold shadow-lg shadow-emerald-900/20 transition-all flex items-center gap-2">
+                  {loading ? <Loader2 size={16} className="animate-spin"/> : <GitMerge size={16} />} Squash and Merge
+               </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* LEFT SIDEBAR: Navigation */}
       <aside className="w-72 border-r border-zinc-800 flex flex-col bg-zinc-950/50 z-10">
         <div className="p-4 flex items-center justify-between mb-2">
           <div className="flex items-center gap-2"><div className="bg-indigo-600 p-1.5 rounded-lg"><GitBranch size={18} className="text-white" /></div><h1 className="font-bold text-md tracking-tight">DialogTree</h1></div>
@@ -511,7 +591,10 @@ export default function DialogTreeHome() {
         </nav>
       </aside>
 
+      {/* MAIN VIEW: Chat Timeline */}
       <main className="flex-1 flex flex-col relative min-w-0 bg-zinc-950">
+        
+        {/* HEADER BAR */}
         <header className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-950/80 backdrop-blur-sm z-10 shrink-0">
           <div className="flex items-center gap-3">
              <span className="text-sm font-medium text-zinc-400">active:</span>
@@ -519,21 +602,39 @@ export default function DialogTreeHome() {
           </div>
           <div className="flex items-center gap-3">
             
-            {/* 🔥 NEW: Export Timeline Button */}
-            <button onClick={exportTimeline} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900 transition-all text-xs font-medium" title="Export this timeline as Markdown">
-               <DownloadCloud size={14} /> Export
-            </button>
+            {/* 🔥 NEW: Clean Export Dropdown */}
+            <div className="relative">
+               <button onClick={() => setExportMenuOpen(!exportMenuOpen)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-900 transition-all text-xs font-medium" title="Export this timeline">
+                  <DownloadCloud size={14} /> Export <ChevronDown size={12} className={`transition-transform ${exportMenuOpen ? 'rotate-180' : ''}`}/>
+               </button>
+               {exportMenuOpen && (
+                  <div className="absolute right-0 mt-2 w-48 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl py-1 z-50">
+                     <button onClick={exportMD} className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex flex-col">
+                        <span className="font-semibold">Markdown (.md)</span>
+                        <span className="text-[10px] text-zinc-500">For GitHub or Obsidian</span>
+                     </button>
+                     <div className="h-px bg-zinc-800 my-1"></div>
+                     <button onClick={exportPDF} className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex flex-col">
+                        <span className="font-semibold">Print / PDF</span>
+                        <span className="text-[10px] text-zinc-500">Perfectly formatted document</span>
+                     </button>
+                  </div>
+               )}
+            </div>
 
             <button onClick={() => setIsArtifactSidebarOpen(!isArtifactSidebarOpen)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-medium ${isArtifactSidebarOpen || timelineArtifacts.length > 0 ? 'border-indigo-600/50 bg-indigo-900/20 text-indigo-300 hover:bg-indigo-900/40' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
                <Library size={14} /> Artifacts ({timelineArtifacts.length})
             </button>
 
             {activeBranch?.is_ephemeral && (<button onClick={makePermanent} className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-amber-900/30 border border-amber-700 hover:bg-amber-900/50 text-amber-300 text-xs font-medium transition-all"><Save size={14} /> Make Permanent</button>)}
-            <button onClick={handleMerge} className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-zinc-700 hover:bg-zinc-900 text-xs font-medium transition-all text-zinc-300"><GitMerge size={14} /> Merge Request</button>
+            
+            {/* 🔥 UPGRADED: Merge Button now triggers the PR Modal */}
+            <button onClick={initiateMerge} className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-emerald-900/50 hover:bg-emerald-900/20 text-xs font-medium transition-all text-emerald-400 bg-zinc-900 shadow-sm"><GitMerge size={14} /> Merge Request</button>
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth min-h-0">
+        {/* CHAT TIMELINE */}
+        <div className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth min-h-0" onClick={() => setExportMenuOpen(false)}>
           {switching ? (<div className="flex justify-center mt-20"><Loader2 size={24} className="animate-spin text-indigo-500" /></div>) : messages.length === 0 ? (<div className="text-center mt-20 text-zinc-500">Start typing...</div>) : (
             messages.map((m, i) => {
               
@@ -561,7 +662,8 @@ export default function DialogTreeHome() {
           {loading && (<div className="flex gap-3 items-center text-zinc-400 text-sm bg-zinc-900/50 w-max px-4 py-2 rounded-full border border-zinc-800/50"><Loader2 size={16} className="animate-spin text-indigo-500" /> <span>AI is thinking...</span></div>)}
         </div>
 
-        <div className="p-6 pt-2 shrink-0">
+        {/* INPUT AREA */}
+        <div className="p-6 pt-2 shrink-0" onClick={() => setExportMenuOpen(false)}>
           <div className="max-w-4xl mx-auto relative group flex items-end gap-3 bg-zinc-900 border border-zinc-800 rounded-3xl p-2 shadow-xl focus-within:border-indigo-500/50 focus-within:ring-1 focus-within:ring-indigo-500/50 transition-all">
             
             <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.md,.js,.ts,.py,.json,.html,.css,.csv,.pdf,image/*" />
@@ -597,6 +699,7 @@ export default function DialogTreeHome() {
         </div>
       </main>
 
+      {/* ARTIFACT LIBRARY SIDEBAR */}
       {isArtifactSidebarOpen && (
          <aside className="w-64 border-l border-zinc-800 bg-zinc-950/90 backdrop-blur-md flex flex-col shadow-2xl z-20">
             <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-4 bg-zinc-900/50">
@@ -610,12 +713,11 @@ export default function DialogTreeHome() {
                   <div className="text-xs text-zinc-600 text-center mt-10 italic">No code generated in this timeline yet.</div>
                ) : (
                   timelineArtifacts.map((art, idx) => (
-                     <div key={idx} className="bg-zinc-900 border border-zinc-800 rounded-xl p-3 hover:border-indigo-500/50 transition-colors group">
+                     <div key={idx} className="bg-zinc-900 border border-zinc-800 rounded-xl p-3 hover:border-indigo-500/50 transition-colors group cursor-pointer" onClick={() => setActiveArtifact({ code: art.code, lang: art.lang })}>
                         <div className="flex items-center justify-between mb-2">
                            <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 bg-zinc-950 px-2 py-0.5 rounded">{art.lang}</span>
                            <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button onClick={() => setActiveArtifact({ code: art.code, lang: art.lang })} className="text-indigo-400 hover:text-indigo-300 text-xs flex items-center gap-1"><Maximize2 size={12}/> View</button>
-                              <button onClick={() => downloadCode(art.code, art.lang)} className="text-zinc-400 hover:text-zinc-200 text-xs"><Download size={12}/></button>
+                              <button onClick={(e) => { e.stopPropagation(); downloadCode(art.code, art.lang); }} className="text-zinc-400 hover:text-zinc-200 text-xs"><Download size={12}/></button>
                            </div>
                         </div>
                         <div className="text-xs text-zinc-400 line-clamp-3 font-mono bg-zinc-950 p-2 rounded border border-zinc-800/50">
@@ -628,6 +730,7 @@ export default function DialogTreeHome() {
          </aside>
       )}
 
+      {/* ARTIFACT VIEWER (SPLIT SCREEN) */}
       {activeArtifact && (
         <aside className="w-[45%] min-w-[400px] border-l border-zinc-800 bg-zinc-950 flex flex-col shadow-2xl z-30 absolute right-0 top-0 bottom-0">
             <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900">
