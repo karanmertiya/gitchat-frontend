@@ -65,7 +65,9 @@ export const downloadAllArtifacts = async (artifacts: any[], branchName: string)
 export const extractAllArtifacts = (msgs: any[]) => {
   const allArtifacts: { code: string, lang: string, filename: string, msgIndex: number }[] = [];
   const ticks = ['`', '`', '`'].join('');
-  const pattern = ticks + '([a-zA-Z0-9_+-]*)(?:.*?(?:filename|name|file)=["\']?([^"\'\\s]+)["\']?)?[ \\t]*\\n([\\s\\S]*?)' + ticks;
+  
+  // 🔥 ROCK-SOLID REGEX: Tolerates \r\n, trailing spaces, and grabs meta directly.
+  const pattern = ticks + '([a-zA-Z0-9_+-]*)[ \\t\\r]*([^\\n]*)\\n([\\s\\S]*?)' + ticks;
   const regex = new RegExp(pattern, 'g');
 
   msgs.forEach((m, idx) => {
@@ -74,28 +76,49 @@ export const extractAllArtifacts = (msgs: any[]) => {
         regex.lastIndex = 0;
         while ((match = regex.exec(m.content)) !== null) {
            let lang = match[1] ? String(match[1]).trim().toLowerCase() : 'text';
-           let filename = match[2] ? String(match[2]).trim() : '';
+           let meta = match[2] ? String(match[2]).trim() : '';
            let code = match[3] ? String(match[3]).trim() : '';
+           let filename = '';
+
+           // 1. Markdown Metadata (e.g., ```javascript filename="app.js")
+           const metaMatch = meta.match(/(?:file|name|filename)=["']?([^"'\s]+)["']?/i);
+           if (metaMatch && metaMatch[1]) filename = metaMatch[1];
            
            if (!filename) {
                const firstLine = code.split('\n')[0] || '';
-               // 🔥 Using your exact approved regex!
+               
+               // 2. Your exact requested regex
                const nameMatch = firstLine.match(/^(?:\/\/#|\/\/|#|--)\s*(?:filename\s*[:=]\s*)?(.+\.\w+)/i);
                
                if (nameMatch && nameMatch[1]) {
                    filename = nameMatch[1].trim();
+               } else {
+                   // 3. Dynamic HTML/CSS Regex (safely built so it doesn't break the chat window!)
+                   const htmlC = '<' + '!--';
+                   const cssC = '\\/\\*';
+                   const webRegex = new RegExp(`^(?:${htmlC}|${cssC})\\s*(?:filename\\s*[:=]\\s*)?([\\w.-]+\\.\\w+)`, 'i');
+                   const webMatch = firstLine.match(webRegex);
+                   if (webMatch && webMatch[1]) {
+                       filename = webMatch[1].replace(/(-->|\*\/)$/, '').trim();
+                   }
+               }
+
+               // Strip the matched comment line from the actual code
+               if (filename) {
                    const newlineIndex = code.indexOf('\n');
                    if (newlineIndex !== -1) code = code.substring(newlineIndex + 1).trim();
                }
            }
 
-           // Smart Fallbacks for HTML, CSS, and unnamed classes/functions
+           // 4. Smart Language Fallbacks
            if (!filename) {
                const ext = lang === 'text' ? 'txt' : lang.replace('javascript', 'js').replace('typescript', 'ts').replace('python', 'py');
                if (lang === 'html' || code.toLowerCase().includes('<!doctype html>') || code.toLowerCase().includes('<html')) {
                    filename = 'index.html';
                } else if (lang === 'css' || code.includes('margin:') || code.includes('padding:')) {
-                   filename = 'style.css'; 
+                   filename = 'styles.css'; 
+               } else if (lang === 'bash' || lang === 'sh') {
+                   filename = `script_${idx}_${allArtifacts.length + 1}.sh`;
                } else {
                    const classMatch = code.match(/class\s+([A-Z][a-zA-Z0-9_]*)/);
                    const funcMatch = code.match(/(?:function|const|let)\s+([a-zA-Z0-9_]+)/);
@@ -110,9 +133,7 @@ export const extractAllArtifacts = (msgs: any[]) => {
      }
   });
 
-  // 🔥 VIRTUAL FILE SYSTEM DEDUPLICATION:
-  // We loop chronologically. If a file with the same name is generated again, 
-  // it overwrites the old one in the Map. This guarantees we only return the LATEST state of each file!
+  // VIRTUAL FILE SYSTEM DEDUPLICATION
   const latestFiles = new Map<string, any>();
   allArtifacts.forEach(art => {
       latestFiles.set(art.filename, art);
@@ -155,24 +176,36 @@ export const exportPDF = (activeBranch: any, messages: any[], setExportMenuOpen:
       <html>
       <head>
           <title>Timeline Export: ${activeBranch.name}</title>
-          <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-dark.min.css">
+          <link rel="stylesheet" href="[https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-dark.min.css](https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-dark.min.css)">
+          <link rel="stylesheet" href="[https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css](https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css)">
           <style>
-              @page { margin: 15mm; size: auto; }
+              @page { margin: 10mm; size: auto; }
               body { padding: 20px; margin: 0; background: #0d1117; color: #c9d1d9; -webkit-print-color-adjust: exact; color-adjust: exact; }
               .markdown-body { box-sizing: border-box; max-width: 100% !important; margin: 0 auto; font-family: -apple-system, sans-serif; background: #0d1117; }
               pre, code { white-space: pre-wrap !important; word-break: break-word !important; background: #161b22 !important; border: 1px solid #30363d; border-radius: 6px; }
+              img { max-width: 100% !important; page-break-inside: avoid; }
+              pre, blockquote, tr, td, th { page-break-inside: avoid; }
+              .header { border-bottom: 1px solid #30363d; padding-bottom: 10px; margin-bottom: 20px; font-family: monospace; color: #8b949e; font-size: 12px; }
           </style>
       </head>
-      <body>
+      <body class="markdown-body">
+          <div class="header">DialogTree Workspace // Branch: ${activeBranch.name} // Generated: ${new Date().toLocaleString()}</div>
           <textarea id="raw-md" style="display:none;">${escapedMd}</textarea>
-          <article class="markdown-body" id="content">Building PDF... Please wait.</article>
-          <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+          <article id="content">Building beautiful PDF... Please wait.</article>
+          <script src="[https://cdn.jsdelivr.net/npm/marked/marked.min.js](https://cdn.jsdelivr.net/npm/marked/marked.min.js)"></script>
+          <script src="[https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js](https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js)"></script>
           <script>
               setTimeout(() => {
                   try {
                       const md = document.getElementById('raw-md').value;
+                      marked.setOptions({
+                          highlight: function(code, lang) {
+                              const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+                              return hljs.highlight(code, { language }).value;
+                          }
+                      });
                       document.getElementById('content').innerHTML = marked.parse(md);
-                      setTimeout(() => { window.print(); window.close(); }, 500);
+                      setTimeout(() => { window.print(); window.close(); }, 800);
                   } catch(e) {
                       document.getElementById('content').innerHTML = "Failed to render PDF: " + e.message;
                   }
