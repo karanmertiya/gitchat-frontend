@@ -1,12 +1,12 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 
-// 🔥 Highlighters and Editor
+// Highlighters and Editor
 import Editor from "@monaco-editor/react";
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -34,22 +34,23 @@ export default function DialogTreeHome() {
   const [workspace, setWorkspace] = useState<any>(null);
   const [activeBranch, setActiveBranch] = useState<any>(null);
   const [branches, setBranches] = useState<any[]>([]);
-  
   const [recentWorkspaces, setRecentWorkspaces] = useState<{id: string, name: string}[]>([]);
 
+  // 🔥 NEW STATE: Editor vs Preview Tab
   const [activeArtifact, setActiveArtifact] = useState<{code: string, lang: string, filename: string} | null>(null);
+  const [editorTab, setEditorTab] = useState<'code' | 'preview'>('code');
   const [editorWidth, setEditorWidth] = useState(45); 
-  const [githubModalOpen, setGithubModalOpen] = useState(false);
   
-  // 🔥 GITHUB STATE
+  // GITHUB STATE
+  const [githubModalOpen, setGithubModalOpen] = useState(false);
   const [githubRepo, setGithubRepo] = useState("");
   const [githubCommitMsg, setGithubCommitMsg] = useState("");
   const [githubToken, setGithubToken] = useState("");
+  const [githubPushAll, setGithubPushAll] = useState(true); // Default to pushing the whole branch
   const [githubPushing, setGithubPushing] = useState(false);
 
   const [isArtifactSidebarOpen, setIsArtifactSidebarOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
-  
   const [isChitchatOpen, setIsChitchatOpen] = useState(false);
   const [chitchatInput, setChitchatInput] = useState("");
   const [chitchatMsgs, setChitchatMsgs] = useState<any[]>([]);
@@ -61,6 +62,40 @@ export default function DialogTreeHome() {
   const [isDiffLoading, setIsDiffLoading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const timelineArtifacts = extractAllArtifacts(messages);
+
+  // 🔥 THE MAGIC BUNDLER: Combines HTML, CSS, and JS into a working page
+  const getPreviewHtml = () => {
+      const htmlArt = timelineArtifacts.find(a => a.lang === 'html' || a.filename.endsWith('.html'))?.code || '<div style="color:white; font-family:sans-serif; text-align:center; margin-top: 50px;"><h2>No HTML file found</h2><p>Ask the AI to generate an index.html file to see the preview!</p></div>';
+      const cssArt = timelineArtifacts.find(a => a.lang === 'css' || a.filename.endsWith('.css'))?.code || '';
+      const jsArt = timelineArtifacts.find(a => a.lang.includes('js') || a.filename.endsWith('.js'))?.code || '';
+
+      return `
+          <!DOCTYPE html>
+          <html>
+          <head>
+              <meta charset="utf-8">
+              <meta name="viewport" content="width=device-width, initial-scale=1">
+              <style>
+                  /* Reset body margin for perfect iframe fit */
+                  body { margin: 0; padding: 0; }
+                  ${cssArt}
+              </style>
+          </head>
+          <body>
+              ${htmlArt}
+              <script>
+                  try {
+                      ${jsArt}
+                  } catch(e) {
+                      console.error("Preview JS Error: ", e);
+                  }
+              </script>
+          </body>
+          </html>
+      `;
+  };
 
   const startResizing = useCallback((mouseDownEvent: React.MouseEvent) => {
     const startWidth = editorWidth;
@@ -88,7 +123,6 @@ export default function DialogTreeHome() {
       if (!session) setIsInitializing(false);
     });
 
-    // LOAD GITHUB CREDENTIALS FROM LOCAL STORAGE ON BOOT
     setGithubRepo(localStorage.getItem('dialogtree_github_repo') || "");
     setGithubToken(localStorage.getItem('dialogtree_github_token') || "");
 
@@ -190,9 +224,7 @@ export default function DialogTreeHome() {
 
   const createNewWorkspace = () => {
       const name = prompt("Enter a name for your new workspace:");
-      if (name) {
-          window.location.href = `/?newWsName=${encodeURIComponent(name)}`;
-      }
+      if (name) { window.location.href = `/?newWsName=${encodeURIComponent(name)}`; }
   };
 
   const handleSend = async () => {
@@ -270,19 +302,26 @@ export default function DialogTreeHome() {
     } catch(e: any) { alert(`Merge failed: ${e.message}`); } finally { setLoading(false); }
   };
 
+  // 🔥 UPDATED GITHUB PUSH FUNCTION (Accepts Array of Files)
   const executeGithubPush = async () => {
       if (!githubRepo || !githubCommitMsg || !activeArtifact || !githubToken) {
-          alert("Please fill in repository, commit message, and your GitHub Token!"); return;
+          alert("Please fill in all repository and token fields!"); return;
       }
       setGithubPushing(true);
       try {
-          const res = await api.pushToGithub(githubRepo, activeBranch?.name || 'main', activeArtifact.filename, activeArtifact.code, githubCommitMsg, githubToken);
+          // If toggle is true, map all artifacts. Else, just map the active one.
+          const filesToSend = githubPushAll 
+              ? timelineArtifacts.map(art => ({ path: art.filename, content: art.code }))
+              : [{ path: activeArtifact.filename, content: activeArtifact.code }];
+
+          const res = await api.pushToGithub(githubRepo, activeBranch?.name || 'main', filesToSend, githubCommitMsg, githubToken);
           if (res.error) throw new Error(res.error);
-          alert("Successfully pushed to GitHub!");
+          
+          alert(`Successfully pushed ${filesToSend.length} file(s) to GitHub!`);
           setGithubModalOpen(false);
           setGithubCommitMsg("");
       } catch (err: any) {
-          alert("GitHub Push Failed. Check your Token and Repo name.\n\nError: " + err.message);
+          alert("GitHub Push Failed.\n\nError: " + err.message);
       } finally {
           setGithubPushing(false);
       }
@@ -329,7 +368,6 @@ export default function DialogTreeHome() {
     }
   };
 
-  // VS CODE SYNTAX HIGHLIGHTING FOR CHAT
   const MarkdownComponents = {
     code({node, inline, className, children, ...props}: any) {
       const match = /language-(\w+)/.exec(className || '');
@@ -340,7 +378,7 @@ export default function DialogTreeHome() {
              <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">{match[1]}</span>
              <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
                <button onClick={() => navigator.clipboard.writeText(codeString)} className="text-zinc-400 hover:text-zinc-200 text-xs">Copy</button>
-               <button onClick={() => setActiveArtifact({ code: codeString, lang: match[1], filename: 'snippet' })} className="text-indigo-400 hover:text-indigo-300 text-xs font-semibold ml-2 flex items-center gap-1"><Code size={12}/> Edit</button>
+               <button onClick={() => { setActiveArtifact({ code: codeString, lang: match[1], filename: 'snippet' }); setEditorTab('code'); }} className="text-indigo-400 hover:text-indigo-300 text-xs font-semibold ml-2 flex items-center gap-1"><Code size={12}/> Edit</button>
              </div>
           </div>
           {/* @ts-ignore */}
@@ -351,8 +389,6 @@ export default function DialogTreeHome() {
       ) : (<code className="bg-zinc-800 text-indigo-300 px-1.5 py-0.5 rounded-md text-[13px]" {...props}>{children}</code>)
     }
   };
-
-  const timelineArtifacts = extractAllArtifacts(messages);
 
   if (isInitializing) {
      return (
@@ -388,8 +424,6 @@ export default function DialogTreeHome() {
               </div>
               <div className="flex gap-3 mb-6">
                 <button onClick={() => handleOAuth('google')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Globe size={16} className="text-zinc-400" /> Google</button>
-                
-                {/* 🔥 FIX: REPLACED WITH GitCommit */}
                 <button onClick={() => handleOAuth('github')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><GitCommit size={16} className="text-zinc-400" /> GitHub</button>
               </div>
               <div className="relative flex items-center py-4 mb-2">
@@ -417,7 +451,6 @@ export default function DialogTreeHome() {
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans relative overflow-hidden">
       
-      {/* FLOATING MULTIPLAYER CHITCHAT */}
       <div className="absolute bottom-6 right-6 z-50">
          {isChitchatOpen ? (
             <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-80 shadow-2xl flex flex-col h-[450px] overflow-hidden">
@@ -453,7 +486,6 @@ export default function DialogTreeHome() {
          )}
       </div>
 
-      {/* DIVERGE TIMELINE MODAL */}
       {forkModal.isOpen && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
@@ -468,7 +500,7 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* 🔥 GITHUB PUSH MODAL (UPDATED UI) */}
+      {/* 🔥 GITHUB PUSH MODAL */}
       {githubModalOpen && activeArtifact && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
@@ -482,35 +514,34 @@ export default function DialogTreeHome() {
                     <input 
                         type="text" 
                         value={githubRepo} 
-                        onChange={e => {
-                            setGithubRepo(e.target.value);
-                            localStorage.setItem('dialogtree_github_repo', e.target.value);
-                        }} 
+                        onChange={e => { setGithubRepo(e.target.value); localStorage.setItem('dialogtree_github_repo', e.target.value); }} 
                         placeholder="e.g. karanmertiya/dialogtree" 
                         className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" 
                     />
                 </div>
                 <div>
                     <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Commit Message</label>
-                    <input type="text" value={githubCommitMsg} onChange={e => setGithubCommitMsg(e.target.value)} placeholder={`Update ${activeArtifact.filename}`} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
+                    <input type="text" value={githubCommitMsg} onChange={e => setGithubCommitMsg(e.target.value)} placeholder={`Update files`} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
                 </div>
                 <div>
                     <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">GitHub Personal Access Token</label>
                     <input 
                         type="password" 
                         value={githubToken} 
-                        onChange={e => {
-                            setGithubToken(e.target.value);
-                            localStorage.setItem('dialogtree_github_token', e.target.value);
-                        }} 
+                        onChange={e => { setGithubToken(e.target.value); localStorage.setItem('dialogtree_github_token', e.target.value); }} 
                         placeholder="ghp_xxxxxxxxxxxx" 
                         className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" 
                     />
-                    <p className="text-[10px] text-zinc-500 mt-1">Needs 'repo' scope. 🔒 Saved permanently in your browser's Local Storage, never to our database.</p>
+                    <p className="text-[10px] text-zinc-500 mt-1">Needs 'repo' scope. 🔒 Saved securely in Local Storage.</p>
                 </div>
-                <div className="bg-zinc-950/50 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-400">
-                    <span className="font-semibold text-indigo-400">Branch:</span> {activeBranch?.name || 'main'} <br/>
-                    <span className="font-semibold text-indigo-400">File:</span> {activeArtifact.filename}
+
+                {/* 🔥 NEW: PUSH TOGGLE */}
+                <div className="bg-zinc-950/50 border border-zinc-800 rounded-lg p-3">
+                    <label className="flex items-center gap-2 cursor-pointer text-sm text-zinc-300">
+                        <input type="checkbox" checked={githubPushAll} onChange={(e) => setGithubPushAll(e.target.checked)} className="rounded bg-zinc-900 border-zinc-700 text-indigo-600 focus:ring-indigo-600" />
+                        Push entire <b>{activeBranch?.name || 'main'}</b> timeline ({timelineArtifacts.length} files)
+                    </label>
+                    {!githubPushAll && <p className="text-xs text-zinc-500 mt-2 pl-6">Only <b>{activeArtifact.filename}</b> will be pushed.</p>}
                 </div>
             </div>
             <div className="flex justify-end gap-3">
@@ -709,7 +740,7 @@ export default function DialogTreeHome() {
                   <div className="text-xs text-zinc-600 text-center mt-10 italic">No code generated in this timeline yet.</div>
                ) : (
                   timelineArtifacts.map((art, idx) => (
-                     <div key={idx} className="bg-zinc-900 border border-zinc-800 rounded-xl p-3 hover:border-indigo-500/50 transition-colors group cursor-pointer" onClick={() => setActiveArtifact({ code: art.code, lang: art.lang, filename: art.filename })}>
+                     <div key={idx} className="bg-zinc-900 border border-zinc-800 rounded-xl p-3 hover:border-indigo-500/50 transition-colors group cursor-pointer" onClick={() => { setActiveArtifact({ code: art.code, lang: art.lang, filename: art.filename }); setEditorTab('code'); }}>
                         <div className="flex items-center justify-between mb-2">
                            <span className="text-[11px] font-bold text-zinc-300 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 truncate max-w-[150px]" title={art.filename}>{art.filename}</span>
                            <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -728,7 +759,7 @@ export default function DialogTreeHome() {
          </aside>
       )}
 
-      {/* 🔥 RESIZABLE ARTIFACT EDITOR PANELS */}
+      {/* 🔥 RESIZABLE ARTIFACT EDITOR PANELS WITH PREVIEW */}
       {activeArtifact && (
         <>
             <div 
@@ -737,27 +768,45 @@ export default function DialogTreeHome() {
             />
             <aside style={{ width: `${editorWidth}%` }} className="min-w-[300px] border-l border-zinc-800 bg-[#1e1e1e] flex flex-col shadow-2xl z-30 relative shrink-0 transition-none">
                 <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900 shrink-0">
-                    <div className="flex items-center gap-2 overflow-hidden pr-4">
+                    <div className="flex items-center gap-4 overflow-hidden pr-4">
                         <Code size={18} className="text-indigo-400 shrink-0"/>
                         <span className="text-sm font-semibold text-zinc-200 truncate">{activeArtifact.filename}</span>
-                        <span className="ml-2 text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded uppercase tracking-wider shrink-0">{activeArtifact.lang}</span>
+                        
+                        {/* 🔥 CODE / PREVIEW TOGGLE */}
+                        <div className="flex bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 ml-4 shrink-0">
+                            <button onClick={() => setEditorTab('code')} className={`px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors ${editorTab === 'code' ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Code</button>
+                            <button onClick={() => setEditorTab('preview')} className={`flex items-center gap-1 px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors ${editorTab === 'preview' ? 'bg-emerald-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}><Play size={12}/> Preview</button>
+                        </div>
                     </div>
                     <div className="flex gap-2 shrink-0">
                         <button onClick={() => setGithubModalOpen(true)} className="flex items-center gap-1.5 text-xs bg-white hover:bg-zinc-200 text-black font-semibold px-3 py-1.5 rounded-lg transition-colors"><GitCommit size={14}/> Commit</button>
                         <button onClick={() => downloadCode(activeArtifact.code, activeArtifact.filename)} className="flex items-center gap-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors"><Download size={14}/> D/L</button>
-                        <button onClick={() => navigator.clipboard.writeText(activeArtifact.code)} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors">Copy</button>
                         <button onClick={() => setActiveArtifact(null)} className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-zinc-800 transition-colors"><X size={18}/></button>
                     </div>
                 </div>
-                <div className="flex-1 overflow-hidden pt-4">
-                    <Editor
-                        height="100%"
-                        language={activeArtifact.lang === 'html' ? 'html' : activeArtifact.lang === 'css' ? 'css' : activeArtifact.lang === 'python' ? 'python' : activeArtifact.lang.includes('js') ? 'javascript' : activeArtifact.lang.includes('ts') ? 'typescript' : 'plaintext'}
-                        theme="vs-dark"
-                        value={activeArtifact.code}
-                        onChange={(val) => setActiveArtifact({ ...activeArtifact, code: val || '' })}
-                        options={{ minimap: { enabled: false }, fontSize: 13, wordWrap: 'on', padding: { top: 16 }, scrollBeyondLastLine: false, smoothScrolling: true }}
-                    />
+                
+                <div className="flex-1 overflow-hidden relative">
+                    {/* The Code Editor */}
+                    <div className={`absolute inset-0 pt-4 transition-opacity ${editorTab === 'code' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
+                        <Editor
+                            height="100%"
+                            language={activeArtifact.lang === 'html' ? 'html' : activeArtifact.lang === 'css' ? 'css' : activeArtifact.lang === 'python' ? 'python' : activeArtifact.lang.includes('js') ? 'javascript' : activeArtifact.lang.includes('ts') ? 'typescript' : 'plaintext'}
+                            theme="vs-dark"
+                            value={activeArtifact.code}
+                            onChange={(val) => setActiveArtifact({ ...activeArtifact, code: val || '' })}
+                            options={{ minimap: { enabled: false }, fontSize: 13, wordWrap: 'on', padding: { top: 16 }, scrollBeyondLastLine: false, smoothScrolling: true }}
+                        />
+                    </div>
+                    
+                    {/* 🔥 THE LIVE WEB PREVIEW */}
+                    <div className={`absolute inset-0 bg-white transition-opacity ${editorTab === 'preview' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
+                        <iframe 
+                            title="live-preview"
+                            className="w-full h-full border-none"
+                            srcDoc={getPreviewHtml()}
+                            sandbox="allow-scripts allow-modals"
+                        />
+                    </div>
                 </div>
             </aside>
         </>

@@ -15,11 +15,11 @@ export const api = {
   toggleEphemeral: (branchId: string) => fetch(`${API_BASE}/branch/toggle`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ branch_id: branchId }) }).then(res => res.json()),
   merge: (sourceId: string, targetId: string, latestSourceMsgId: string, targetParentMsgId?: string | null, frontendHistory?: any[]) => fetch(`${API_BASE}/merge`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ source_branch_id: sourceId, target_branch_id: targetId, latest_message_id_in_source: latestSourceMsgId, parent_message_id_in_target: targetParentMsgId, frontendHistory }) }).then(res => res.json()),
   
-  // 🔥 NEW GITHUB INTEGRATION ENDPOINT
-  pushToGithub: (repoName: string, branchName: string, filePath: string, codeContent: string, commitMessage: string, patToken?: string) => 
+  // 🔥 UPDATED GITHUB ENDPOINT: Now accepts an array of files!
+  pushToGithub: (repoName: string, branchName: string, files: {path: string, content: string}[], commitMessage: string, patToken?: string) => 
     fetch(`${API_BASE}/github/push`, { 
       method: 'POST', 
       headers: { 'Content-Type': 'application/json' }, 
-      body: JSON.stringify({ repo: repoName, branch: branchName, path: filePath, content: codeContent, message: commitMessage, token: patToken }) 
+      body: JSON.stringify({ repo: repoName, branch: branchName, files: files, message: commitMessage, token: patToken }) 
     }).then(res => res.json())
 };
