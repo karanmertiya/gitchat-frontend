@@ -7,7 +7,7 @@ import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 
 // 🔥 Import modularized tools and components
-import { getBranchDepth, downloadCode, extractAllArtifacts, exportMD, exportPDF } from '@/lib/utils';
+import { getBranchDepth, downloadCode, downloadAllArtifacts, extractAllArtifacts, exportMD, exportPDF } from '@/lib/utils';
 import MergeRequestModal from '@/components/MergeRequestModal';
 
 export default function DialogTreeHome() {
@@ -194,7 +194,6 @@ export default function DialogTreeHome() {
     try { await api.toggleEphemeral(activeBranch.id); } catch (err) {}
   };
 
-  // 🔥 TRIGGER PR MODAL (Logic calls external extractors)
   const initiateMerge = async () => {
     if (!activeBranch || activeBranch.name === 'main') { 
         alert("You are already in the main timeline! You must be in a branch to merge."); 
@@ -403,7 +402,7 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* 🔥 NEW MODULAR PR MERGE MODAL */}
+      {/* 🔥 MODULAR PR MERGE MODAL */}
       <MergeRequestModal 
         isOpen={prModalOpen} 
         onClose={() => setPrModalOpen(false)} 
@@ -556,24 +555,32 @@ export default function DialogTreeHome() {
 
       {/* ARTIFACT LIBRARY SIDEBAR */}
       {isArtifactSidebarOpen && (
-         <aside className="w-64 border-l border-zinc-800 bg-zinc-950/90 backdrop-blur-md flex flex-col shadow-2xl z-20">
+         <aside className="w-72 border-l border-zinc-800 bg-zinc-950/90 backdrop-blur-md flex flex-col shadow-2xl z-20">
             <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-4 bg-zinc-900/50">
                <div className="flex items-center gap-2 text-zinc-200 font-semibold text-sm"><Library size={16} className="text-indigo-400" /> Artifact Library</div>
                <button onClick={() => setIsArtifactSidebarOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={16}/></button>
             </div>
-            <div className="flex-1 overflow-y-auto p-3 space-y-2">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+               
+               {/* DOWNLOAD ALL BUTTON */}
+               {timelineArtifacts.length > 0 && (
+                   <button onClick={() => downloadAllArtifacts(timelineArtifacts, activeBranch?.name)} className="w-full bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-600/30 text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all mb-4">
+                       <DownloadCloud size={14} /> Download All as ZIP
+                   </button>
+               )}
+
                {timelineArtifacts.length === 0 ? (
                   <div className="text-xs text-zinc-600 text-center mt-10 italic">No code generated in this timeline yet.</div>
                ) : (
                   timelineArtifacts.map((art, idx) => (
                      <div key={idx} className="bg-zinc-900 border border-zinc-800 rounded-xl p-3 hover:border-indigo-500/50 transition-colors group cursor-pointer" onClick={() => setActiveArtifact({ code: art.code, lang: art.lang, filename: art.filename })}>
                         <div className="flex items-center justify-between mb-2">
-                           <span className="text-[10px] font-bold text-zinc-400 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 truncate max-w-[150px]" title={art.filename}>{art.filename}</span>
+                           <span className="text-[11px] font-bold text-zinc-300 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 truncate max-w-[150px]" title={art.filename}>{art.filename}</span>
                            <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button onClick={(e) => { e.stopPropagation(); downloadCode(art.code, art.filename); }} className="text-zinc-400 hover:text-zinc-200 text-xs"><Download size={12}/></button>
+                              <button onClick={(e) => { e.stopPropagation(); downloadCode(art.code, art.filename); }} className="text-zinc-400 hover:text-zinc-200 text-xs"><Download size={14}/></button>
                            </div>
                         </div>
-                        <div className="text-[10px] uppercase text-zinc-500 mb-1">{art.lang}</div>
+                        <div className="text-[10px] uppercase font-bold text-indigo-400/70 mb-1.5">{art.lang}</div>
                         <div className="text-xs text-zinc-400 max-h-32 overflow-y-auto font-mono bg-zinc-950 p-2 rounded border border-zinc-800/50">{art.code}</div>
                      </div>
                   ))
