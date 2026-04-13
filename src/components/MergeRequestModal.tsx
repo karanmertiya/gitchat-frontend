@@ -1,7 +1,7 @@
 "use client";
 import React from 'react';
 import { GitMerge, X, GitBranch, Loader2, File } from 'lucide-react';
-import { computeLineDiff } from '@/lib/utils';
+import { computeLineDiff } from '@/lib/dialogUtils';
 
 export default function MergeRequestModal({ 
     isOpen, onClose, onConfirm, activeBranch, 

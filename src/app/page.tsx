@@ -7,7 +7,7 @@ import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 
 // 🔥 Import modularized tools and components
-import { getBranchDepth, downloadCode, downloadAllArtifacts, extractAllArtifacts, exportMD, exportPDF } from '@/lib/utils';
+import { getBranchDepth, downloadCode, downloadAllArtifacts, extractAllArtifacts, exportMD, exportPDF } from '@/lib/dialogUtils';
 import MergeRequestModal from '@/components/MergeRequestModal';
 export default function DialogTreeHome() {
   const [session, setSession] = useState<any>(null);
