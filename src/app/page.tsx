@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, Github, GitCommit, Folder, Plus, Settings } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -34,18 +34,18 @@ export default function DialogTreeHome() {
   const [workspace, setWorkspace] = useState<any>(null);
   const [activeBranch, setActiveBranch] = useState<any>(null);
   const [branches, setBranches] = useState<any[]>([]);
+  
   const [recentWorkspaces, setRecentWorkspaces] = useState<{id: string, name: string}[]>([]);
-
-  // 🔥 NEW GITHUB STATES
-  const [githubSettingsOpen, setGithubSettingsOpen] = useState(false);
-  const [commitModalOpen, setCommitModalOpen] = useState(false);
-  const [githubRepo, setGithubRepo] = useState("");
-  const [githubToken, setGithubToken] = useState("");
-  const [githubCommitMsg, setGithubCommitMsg] = useState("");
-  const [githubPushing, setGithubPushing] = useState(false);
 
   const [activeArtifact, setActiveArtifact] = useState<{code: string, lang: string, filename: string} | null>(null);
   const [editorWidth, setEditorWidth] = useState(45); 
+  const [githubModalOpen, setGithubModalOpen] = useState(false);
+  
+  // 🔥 GITHUB STATE
+  const [githubRepo, setGithubRepo] = useState("");
+  const [githubCommitMsg, setGithubCommitMsg] = useState("");
+  const [githubToken, setGithubToken] = useState("");
+  const [githubPushing, setGithubPushing] = useState(false);
 
   const [isArtifactSidebarOpen, setIsArtifactSidebarOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
@@ -61,29 +61,6 @@ export default function DialogTreeHome() {
   const [isDiffLoading, setIsDiffLoading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-
-  // LOAD LOCAL STORAGE CREDENTIALS ON MOUNT
-  useEffect(() => {
-      const savedRepo = localStorage.getItem('dt_github_repo');
-      const savedToken = localStorage.getItem('dt_github_token');
-      if (savedRepo) setGithubRepo(savedRepo);
-      if (savedToken) setGithubToken(savedToken);
-  }, []);
-
-  const saveGithubSettings = () => {
-      localStorage.setItem('dt_github_repo', githubRepo);
-      localStorage.setItem('dt_github_token', githubToken);
-      setGithubSettingsOpen(false);
-  };
-
-  const openCommitFlow = () => {
-      if (!githubRepo || !githubToken) {
-          setGithubSettingsOpen(true);
-      } else {
-          setGithubCommitMsg(`Update ${activeArtifact?.filename || 'file'}`);
-          setCommitModalOpen(true);
-      }
-  };
 
   const startResizing = useCallback((mouseDownEvent: React.MouseEvent) => {
     const startWidth = editorWidth;
@@ -110,6 +87,11 @@ export default function DialogTreeHome() {
       setSession(session);
       if (!session) setIsInitializing(false);
     });
+
+    // 🔥 LOAD GITHUB CREDENTIALS FROM LOCAL STORAGE ON BOOT
+    setGithubRepo(localStorage.getItem('dialogtree_github_repo') || "");
+    setGithubToken(localStorage.getItem('dialogtree_github_token') || "");
+
     return () => subscription.unsubscribe();
   }, []);
 
@@ -139,6 +121,7 @@ export default function DialogTreeHome() {
         } else {
             setRecentWorkspaces(recent);
         }
+
         setIsInitializing(false);
       } catch (err: any) {
         alert(`Backend Error: ${err.message}\n\nLogging out to prevent frozen UI.`);
@@ -175,7 +158,7 @@ export default function DialogTreeHome() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'chitchat_messages' }, () => {
         api.getChitchat(workspace.id).then(res => setChitchatMsgs(res.messages || []));
       })
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'branches' }, () => {
+      .on('postgres_changes', { event: '*', table: 'branches' }, () => {
         api.getBranches(workspace.id).then(res => setBranches(res.branches || []));
       })
       .subscribe();
@@ -207,7 +190,9 @@ export default function DialogTreeHome() {
 
   const createNewWorkspace = () => {
       const name = prompt("Enter a name for your new workspace:");
-      if (name) window.location.href = `/?newWsName=${encodeURIComponent(name)}`;
+      if (name) {
+          window.location.href = `/?newWsName=${encodeURIComponent(name)}`;
+      }
   };
 
   const handleSend = async () => {
@@ -286,15 +271,18 @@ export default function DialogTreeHome() {
   };
 
   const executeGithubPush = async () => {
-      if (!githubRepo || !githubCommitMsg || !activeArtifact || !githubToken) return;
+      if (!githubRepo || !githubCommitMsg || !activeArtifact || !githubToken) {
+          alert("Please fill in repository, commit message, and your GitHub Token!"); return;
+      }
       setGithubPushing(true);
       try {
           const res = await api.pushToGithub(githubRepo, activeBranch?.name || 'main', activeArtifact.filename, activeArtifact.code, githubCommitMsg, githubToken);
           if (res.error) throw new Error(res.error);
           alert("Successfully pushed to GitHub!");
-          setCommitModalOpen(false);
+          setGithubModalOpen(false);
+          setGithubCommitMsg("");
       } catch (err: any) {
-          alert("GitHub Push Failed.\n\nError: " + err.message);
+          alert("GitHub Push Failed. Check your Token and Repo name.\n\nError: " + err.message);
       } finally {
           setGithubPushing(false);
       }
@@ -399,7 +387,9 @@ export default function DialogTreeHome() {
               </div>
               <div className="flex gap-3 mb-6">
                 <button onClick={() => handleOAuth('google')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Globe size={16} className="text-zinc-400" /> Google</button>
-                <button onClick={() => handleOAuth('github')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Github size={16} className="text-zinc-400" /> GitHub</button>
+                
+                {/* 🔥 GITHUB ICON REPLACED WITH GITCOMMIT */}
+                <button onClick={() => handleOAuth('github')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><GitCommit size={16} className="text-zinc-400" /> GitHub</button>
               </div>
               <div className="relative flex items-center py-4 mb-2">
                 <div className="flex-grow border-t border-zinc-800"></div><span className="flex-shrink-0 mx-4 text-zinc-500 text-xs uppercase tracking-widest">Or continue with email</span><div className="flex-grow border-t border-zinc-800"></div>
@@ -426,7 +416,7 @@ export default function DialogTreeHome() {
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans relative overflow-hidden">
       
-      {/* MULTIPLAYER CHITCHAT */}
+      {/* FLOATING MULTIPLAYER CHITCHAT */}
       <div className="absolute bottom-6 right-6 z-50">
          {isChitchatOpen ? (
             <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-80 shadow-2xl flex flex-col h-[450px] overflow-hidden">
@@ -477,58 +467,55 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* 🔥 GLOBAL GITHUB SETTINGS MODAL */}
-      {githubSettingsOpen && (
-        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[80] flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
-            <div className="flex justify-between items-center mb-4">
-                <h2 className="text-lg font-bold flex items-center gap-2"><Github size={20} className="text-white"/> GitHub Credentials</h2>
-                <button onClick={() => setGithubSettingsOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={20}/></button>
-            </div>
-            <p className="text-xs text-zinc-400 mb-6 border-l-2 border-indigo-500 pl-3">
-                For your security, these credentials are <strong>never</strong> saved to our database. They are stored locally in your browser and used only when you click 'Push'.
-            </p>
-            <div className="space-y-4 mb-6">
-                <div>
-                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Repository</label>
-                    <input type="text" value={githubRepo} onChange={e => setGithubRepo(e.target.value)} placeholder="owner/repo-name" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
-                </div>
-                <div>
-                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Personal Access Token (PAT)</label>
-                    <input type="password" value={githubToken} onChange={e => setGithubToken(e.target.value)} placeholder="ghp_xxxxxxxxxxxx" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
-                </div>
-            </div>
-            <div className="flex justify-end gap-3">
-                <button onClick={() => setGithubSettingsOpen(false)} className="px-4 py-2 text-sm text-zinc-400">Cancel</button>
-                <button onClick={saveGithubSettings} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-semibold">Save Locally</button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* 🔥 SMALL COMMIT MODAL (Triggers from Code Viewer) */}
-      {commitModalOpen && activeArtifact && (
+      {/* GITHUB PUSH MODAL */}
+      {githubModalOpen && activeArtifact && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
             <div className="flex justify-between items-center mb-4">
-                <h2 className="text-lg font-bold flex items-center gap-2"><GitCommit size={20} className="text-white"/> Commit File</h2>
-                <button onClick={() => setCommitModalOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={20}/></button>
+                <h2 className="text-lg font-bold flex items-center gap-2"><GitCommit size={20} className="text-white"/> Commit to GitHub</h2>
+                <button onClick={() => setGithubModalOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={20}/></button>
             </div>
             <div className="space-y-4 mb-6">
-                <div className="bg-zinc-950/50 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-400 flex flex-col gap-1">
-                    <div><span className="font-semibold text-indigo-400">Target Repo:</span> {githubRepo}</div>
-                    <div><span className="font-semibold text-indigo-400">Target Branch:</span> {activeBranch?.name || 'main'}</div>
-                    <div><span className="font-semibold text-indigo-400">File:</span> {activeArtifact.filename}</div>
+                <div>
+                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Repository (owner/repo)</label>
+                    <input 
+                        type="text" 
+                        value={githubRepo} 
+                        onChange={e => {
+                            setGithubRepo(e.target.value);
+                            localStorage.setItem('dialogtree_github_repo', e.target.value);
+                        }} 
+                        placeholder="e.g. karanmertiya/dialogtree" 
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" 
+                    />
                 </div>
                 <div>
                     <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Commit Message</label>
-                    <input type="text" value={githubCommitMsg} onChange={e => setGithubCommitMsg(e.target.value)} autoFocus className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
+                    <input type="text" value={githubCommitMsg} onChange={e => setGithubCommitMsg(e.target.value)} placeholder={`Update ${activeArtifact.filename}`} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
+                </div>
+                <div>
+                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">GitHub Personal Access Token</label>
+                    <input 
+                        type="password" 
+                        value={githubToken} 
+                        onChange={e => {
+                            setGithubToken(e.target.value);
+                            localStorage.setItem('dialogtree_github_token', e.target.value);
+                        }} 
+                        placeholder="ghp_xxxxxxxxxxxx" 
+                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" 
+                    />
+                    <p className="text-[10px] text-zinc-500 mt-1">Needs 'repo' scope. Tokens are securely stored in your browser.</p>
+                </div>
+                <div className="bg-zinc-950/50 border border-zinc-800 rounded-lg p-3 text-xs text-zinc-400">
+                    <span className="font-semibold text-indigo-400">Branch:</span> {activeBranch?.name || 'main'} <br/>
+                    <span className="font-semibold text-indigo-400">File:</span> {activeArtifact.filename}
                 </div>
             </div>
             <div className="flex justify-end gap-3">
-                <button onClick={() => setCommitModalOpen(false)} className="px-4 py-2 text-sm text-zinc-400">Cancel</button>
-                <button onClick={executeGithubPush} disabled={githubPushing || !githubCommitMsg} className="px-4 py-2 bg-white hover:bg-zinc-200 disabled:opacity-50 text-black rounded-lg text-sm font-semibold flex items-center gap-2">
-                    {githubPushing ? <Loader2 size={14} className="animate-spin"/> : <GitCommit size={14}/>} Push
+                <button onClick={() => setGithubModalOpen(false)} className="px-4 py-2 text-sm text-zinc-400">Cancel</button>
+                <button onClick={executeGithubPush} disabled={githubPushing || !githubRepo || !githubCommitMsg || !githubToken} className="px-4 py-2 bg-white hover:bg-zinc-200 disabled:opacity-50 text-black rounded-lg text-sm font-semibold flex items-center gap-2">
+                    {githubPushing ? <Loader2 size={14} className="animate-spin"/> : <GitCommit size={14}/>} Push to GitHub
                 </button>
             </div>
           </div>
@@ -565,6 +552,8 @@ export default function DialogTreeHome() {
         </div>
         
         <nav className="flex-1 px-3 overflow-y-auto">
+          
+          {/* 🔥 WORKSPACES SECTION */}
           <div className="mb-6">
             <div className="text-xs font-semibold text-zinc-500 mb-2 px-2 uppercase tracking-wider flex justify-between items-center">
                 Workspaces
@@ -616,11 +605,6 @@ export default function DialogTreeHome() {
           </div>
           <div className="flex items-center gap-3">
             
-            {/* 🔥 GLOBAL GITHUB SETTINGS ICON */}
-            <button onClick={() => setGithubSettingsOpen(true)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-900 transition-all text-xs font-medium" title="GitHub Settings">
-                <Github size={14} />
-            </button>
-
             <div className="relative">
                <button onClick={() => setExportMenuOpen(!exportMenuOpen)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-900 transition-all text-xs font-medium" title="Export this timeline">
                   <Cloud size={14} /> Export <ChevronDown size={12} className={`transition-transform ${exportMenuOpen ? 'rotate-180' : ''}`}/>
@@ -706,6 +690,7 @@ export default function DialogTreeHome() {
         </div>
       </main>
 
+      {/* ARTIFACT LIBRARY SIDEBAR */}
       {isArtifactSidebarOpen && (
          <aside className="w-72 border-l border-zinc-800 bg-zinc-950/90 backdrop-blur-md flex flex-col shadow-2xl z-20 shrink-0">
             <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-4 bg-zinc-900/50">
@@ -743,7 +728,7 @@ export default function DialogTreeHome() {
          </aside>
       )}
 
-      {/* RESIZABLE ARTIFACT EDITOR PANELS */}
+      {/* 🔥 RESIZABLE ARTIFACT EDITOR PANELS */}
       {activeArtifact && (
         <>
             <div 
@@ -758,8 +743,7 @@ export default function DialogTreeHome() {
                         <span className="ml-2 text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded uppercase tracking-wider shrink-0">{activeArtifact.lang}</span>
                     </div>
                     <div className="flex gap-2 shrink-0">
-                        {/* 🔥 TRIGGERS SMART COMMIT FLOW */}
-                        <button onClick={openCommitFlow} className="flex items-center gap-1.5 text-xs bg-white hover:bg-zinc-200 text-black font-semibold px-3 py-1.5 rounded-lg transition-colors"><GitCommit size={14}/> Commit</button>
+                        <button onClick={() => setGithubModalOpen(true)} className="flex items-center gap-1.5 text-xs bg-white hover:bg-zinc-200 text-black font-semibold px-3 py-1.5 rounded-lg transition-colors"><GitCommit size={14}/> Commit</button>
                         <button onClick={() => downloadCode(activeArtifact.code, activeArtifact.filename)} className="flex items-center gap-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors"><Download size={14}/> D/L</button>
                         <button onClick={() => navigator.clipboard.writeText(activeArtifact.code)} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors">Copy</button>
                         <button onClick={() => setActiveArtifact(null)} className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-zinc-800 transition-colors"><X size={18}/></button>
