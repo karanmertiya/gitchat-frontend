@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, Maximize2, MessageCircle, Share2, Download, Trash2, User, Library } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, Maximize2, MessageCircle, Share2, Download, Trash2, User, Library, DownloadCloud } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -259,6 +259,33 @@ export default function DialogTreeHome() {
     document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
   };
 
+  // 🔥 NEW: One-Click Timeline Export Engine
+  const exportTimeline = () => {
+    if (!activeBranch || messages.length === 0) return;
+    
+    const date = new Date().toLocaleDateString();
+    let mdContent = `# Conversation Export: ${activeBranch.name}\n**Exported on:** ${date}\n\n---\n\n`;
+    
+    messages.forEach((m) => {
+      const roleName = m.role === 'user' ? '👤 **User**' : m.role === 'system' ? '⚙️ **System**' : '🤖 **AI**';
+      
+      // Clean up the text by stripping raw PDF dumps and replacing them with a neat citation block
+      const cleanContent = m.content.replace(/---START_ATTACHMENT:(.*?)---[\s\S]*?---END_ATTACHMENT---/g, '> 📎 *Attached Document: `$1`*');
+      
+      mdContent += `### ${roleName}\n${cleanContent}\n\n---\n\n`;
+    });
+
+    const blob = new Blob([mdContent], { type: 'text/markdown' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `Timeline_${activeBranch.name}_${Date.now()}.md`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
+
   const handleChitchatSend = async () => {
     if (!chitchatInput.trim() || !workspace) return;
     const msg = chitchatInput;
@@ -491,6 +518,12 @@ export default function DialogTreeHome() {
              <code className="bg-zinc-900 px-3 py-1 rounded-md text-xs text-indigo-300 border border-zinc-700 flex items-center gap-2">{activeBranch?.is_ephemeral && <Zap size={12} className="text-amber-400"/>}{activeBranch?.name || 'loading...'}</code>
           </div>
           <div className="flex items-center gap-3">
+            
+            {/* 🔥 NEW: Export Timeline Button */}
+            <button onClick={exportTimeline} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-800 text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900 transition-all text-xs font-medium" title="Export this timeline as Markdown">
+               <DownloadCloud size={14} /> Export
+            </button>
+
             <button onClick={() => setIsArtifactSidebarOpen(!isArtifactSidebarOpen)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-medium ${isArtifactSidebarOpen || timelineArtifacts.length > 0 ? 'border-indigo-600/50 bg-indigo-900/20 text-indigo-300 hover:bg-indigo-900/40' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
                <Library size={14} /> Artifacts ({timelineArtifacts.length})
             </button>
