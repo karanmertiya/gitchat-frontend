@@ -203,10 +203,13 @@ export default function DialogTreeHome() {
 
   const extractAllArtifacts = (msgs: any[]) => {
     const allArtifacts: { code: string, lang: string, filename: string, msgIndex: number }[] = [];
+    
+    const ticks = ['`', '`', '`'].join('');
+    const pattern = ticks + '([a-zA-Z0-9_+-]*)(?:.*?(?:filename|name|file)=["\']?([^"\'\\s]+)["\']?)?[ \\t]*\\n([\\s\\S]*?)' + ticks;
+    const regex = new RegExp(pattern, 'g');
+
     msgs.forEach((m, idx) => {
        if (m.role === 'ai' || m.role === 'system') {
-          const regex = /```(\w+)?(?:\s+([^\n]+))?\n([\s\S]*?)```/g;
-          
           let match;
           regex.lastIndex = 0;
           while ((match = regex.exec(m.content)) !== null) {
@@ -374,31 +377,41 @@ export default function DialogTreeHome() {
         <html>
         <head>
             <title>Timeline Export: ${activeBranch.name}</title>
-            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-light.min.css">
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-dark.min.css">
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css">
             <style>
-                @page { margin: 15mm; size: auto; }
-                body { padding: 0; margin: 0; background: white; -webkit-print-color-adjust: exact; }
-                .markdown-body { box-sizing: border-box; max-width: 100% !important; margin: 0 auto; font-family: -apple-system, sans-serif; }
-                pre, code { white-space: pre-wrap !important; word-break: break-word !important; }
+                @page { margin: 10mm; size: auto; }
+                body { padding: 20px; margin: 0; background: #0d1117; color: #c9d1d9; -webkit-print-color-adjust: exact; color-adjust: exact; }
+                .markdown-body { box-sizing: border-box; max-width: 100% !important; margin: 0 auto; font-family: -apple-system, sans-serif; background: #0d1117; }
+                pre, code { white-space: pre-wrap !important; word-break: break-word !important; background: #161b22 !important; border: 1px solid #30363d; border-radius: 6px; }
                 img { max-width: 100% !important; page-break-inside: avoid; }
                 pre, blockquote, tr, td, th { page-break-inside: avoid; }
+                .header { border-bottom: 1px solid #30363d; padding-bottom: 10px; margin-bottom: 20px; font-family: monospace; color: #8b949e; font-size: 12px; }
             </style>
         </head>
-        <body>
+        <body class="markdown-body">
+            <div class="header">DialogTree Workspace // Branch: ${activeBranch.name} // Generated: ${new Date().toLocaleString()}</div>
             <textarea id="raw-md" style="display:none;">${escapedMd}</textarea>
-            <article class="markdown-body" id="content">Building PDF... Please wait.</article>
+            <article id="content">Building beautiful PDF... Please wait.</article>
+            <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+            <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
             <script>
-                function renderPDF() {
+                setTimeout(() => {
                     try {
                         const md = document.getElementById('raw-md').value;
+                        marked.setOptions({
+                            highlight: function(code, lang) {
+                                const language = hljs.getLanguage(lang) ? lang : 'plaintext';
+                                return hljs.highlight(code, { language }).value;
+                            }
+                        });
                         document.getElementById('content').innerHTML = marked.parse(md);
-                        setTimeout(() => { window.print(); window.close(); }, 500);
+                        setTimeout(() => { window.print(); window.close(); }, 800);
                     } catch(e) {
                         document.getElementById('content').innerHTML = "Failed to render PDF: " + e.message;
                     }
-                }
+                }, 100);
             </script>
-            <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" onload="renderPDF()"></script>
         </body>
         </html>
     `);
@@ -569,14 +582,14 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* PR MERGE MODAL (WITH TRUE DIFF VIEWER) */}
+      {/* PR MERGE MODAL (WITH TRUE SIDE-BY-SIDE DIFF VIEWER) */}
       {prModalOpen && (
         <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-6">
-          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl w-full max-w-5xl max-h-[90vh] shadow-2xl flex flex-col overflow-hidden">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl w-full max-w-[95vw] lg:max-w-6xl max-h-[90vh] shadow-2xl flex flex-col overflow-hidden">
             <div className="p-5 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center">
                <div>
                   <h2 className="text-xl font-bold flex items-center gap-2 text-zinc-100"><GitMerge size={22} className="text-emerald-400"/> Open Merge Request</h2>
-                  <p className="text-sm text-zinc-400 mt-1">Review line-by-line differences before squashing into the main branch.</p>
+                  <p className="text-sm text-zinc-400 mt-1">Review side-by-side differences before squashing into the main branch.</p>
                </div>
                <button onClick={() => setPrModalOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={24}/></button>
             </div>
@@ -589,7 +602,7 @@ export default function DialogTreeHome() {
                {isDiffLoading ? (
                    <div className="flex flex-col items-center justify-center py-12 text-zinc-500 gap-3">
                        <Loader2 size={24} className="animate-spin text-emerald-500" />
-                       <p className="text-sm">Analyzing line-by-line differences against main...</p>
+                       <p className="text-sm">Analyzing side-by-side differences against main...</p>
                    </div>
                ) : (
                    <div>
@@ -597,32 +610,67 @@ export default function DialogTreeHome() {
                       {timelineArtifacts.length === 0 ? (
                          <div className="text-center p-8 border border-dashed border-zinc-800 rounded-xl text-zinc-500 text-sm">No code files were generated in this timeline. The AI will summarize the conversation text instead.</div>
                       ) : (
-                         <div className="flex flex-col gap-6">
+                         <div className="flex flex-col gap-8">
                             {timelineArtifacts.map((art, idx) => {
                                const oldArt = mainArtifacts.slice().reverse().find(a => a.filename === art.filename);
                                const isNew = !oldArt;
                                const isUnchanged = oldArt && oldArt.code === art.code;
-                               let diffLines: {type: string, value: string}[] = [];
+                               
+                               let sbsRows: {leftNum: number|null, leftCode: string, leftType: string, rightNum: number|null, rightCode: string, rightType: string}[] = [];
                                if (oldArt && !isUnchanged) {
-                                   diffLines = computeLineDiff(oldArt.code, art.code);
+                                   const diffLines = computeLineDiff(oldArt.code, art.code);
+                                   let lLine = 1, rLine = 1;
+                                   for (let i = 0; i < diffLines.length; i++) {
+                                       const line = diffLines[i];
+                                       if (line.type === 'unchanged') {
+                                           sbsRows.push({ leftNum: lLine++, leftCode: line.value, leftType: 'unchanged', rightNum: rLine++, rightCode: line.value, rightType: 'unchanged' });
+                                       } else if (line.type === 'removed') {
+                                           if (i + 1 < diffLines.length && diffLines[i+1].type === 'added') {
+                                               sbsRows.push({ leftNum: lLine++, leftCode: line.value, leftType: 'removed', rightNum: rLine++, rightCode: diffLines[i+1].value, rightType: 'added' });
+                                               i++; 
+                                           } else {
+                                               sbsRows.push({ leftNum: lLine++, leftCode: line.value, leftType: 'removed', rightNum: null, rightCode: '', rightType: 'empty' });
+                                           }
+                                       } else if (line.type === 'added') {
+                                           sbsRows.push({ leftNum: null, leftCode: '', leftType: 'empty', rightNum: rLine++, rightCode: line.value, rightType: 'added' });
+                                       }
+                                   }
                                }
+
                                return (
                                    <div key={idx} className="bg-[#0d1117] border border-zinc-800 rounded-xl overflow-hidden shadow-lg">
-                                        <div className="bg-zinc-900 px-4 py-2 border-b border-zinc-800 flex justify-between items-center">
-                                            <span className="text-[12px] font-bold text-zinc-300 flex items-center gap-2"><File size={14} className="text-indigo-400"/> {art.filename}</span>
+                                        <div className="bg-zinc-900 px-4 py-3 border-b border-zinc-800 flex justify-between items-center">
+                                            <span className="text-[13px] font-bold text-zinc-300 flex items-center gap-2"><File size={16} className="text-indigo-400"/> {art.filename}</span>
                                             {isNew ? <span className="text-[10px] text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded font-medium border border-emerald-400/20">New File</span> :
                                              isUnchanged ? <span className="text-[10px] text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded font-medium border border-zinc-700">Unchanged</span> :
                                              <span className="text-[10px] text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded font-medium border border-amber-400/20">Modified</span>}
                                         </div>
-                                        <div className="overflow-auto max-h-96">
+
+                                        <div className="overflow-x-auto w-full bg-[#0d1117]">
                                             {oldArt && !isUnchanged ? (
-                                                <div className="font-mono text-[12px] w-full min-w-max">
-                                                    {diffLines.map((line, i) => (
-                                                        <div key={i} className={`px-4 py-0.5 flex ${line.type === 'added' ? 'bg-emerald-900/30 text-emerald-300' : line.type === 'removed' ? 'bg-red-900/30 text-red-300 line-through opacity-70' : 'text-zinc-400'}`}>
-                                                            <span className="w-6 shrink-0 opacity-50 select-none text-center mr-2">{line.type === 'added' ? '+' : line.type === 'removed' ? '-' : ' '}</span>
-                                                            <span className="whitespace-pre">{line.value}</span>
+                                                <div className="flex w-full min-w-max text-[12px] font-mono leading-relaxed divide-x divide-zinc-800">
+                                                    <div className="w-1/2 flex flex-col pb-4">
+                                                        <div className="sticky top-0 bg-[#2a1315]/90 text-red-400/80 text-[10px] uppercase tracking-widest px-4 py-2 border-b border-zinc-800/50 backdrop-blur-md z-10 font-sans">Main Branch (Old)</div>
+                                                        <div className="pt-2">
+                                                            {sbsRows.map((r, i) => (
+                                                                <div key={`l-${i}`} className={`flex px-2 hover:bg-zinc-800/30 ${r.leftType === 'removed' ? 'bg-red-900/30 text-red-300' : 'text-zinc-400'} ${r.leftType === 'empty' ? 'bg-[#0d1117] select-none' : ''}`}>
+                                                                    <span className="w-10 shrink-0 text-zinc-600 text-right pr-4 select-none opacity-50">{r.leftNum || ''}</span>
+                                                                    <span className="whitespace-pre">{r.leftCode}</span>
+                                                                </div>
+                                                            ))}
                                                         </div>
-                                                    ))}
+                                                    </div>
+                                                    <div className="w-1/2 flex flex-col pb-4">
+                                                        <div className="sticky top-0 bg-[#102a1b]/90 text-emerald-400/80 text-[10px] uppercase tracking-widest px-4 py-2 border-b border-zinc-800/50 backdrop-blur-md z-10 font-sans">This Timeline (New)</div>
+                                                        <div className="pt-2">
+                                                            {sbsRows.map((r, i) => (
+                                                                <div key={`r-${i}`} className={`flex px-2 hover:bg-zinc-800/30 ${r.rightType === 'added' ? 'bg-emerald-900/30 text-emerald-300' : 'text-zinc-300'} ${r.rightType === 'empty' ? 'bg-[#0d1117] select-none' : ''}`}>
+                                                                    <span className="w-10 shrink-0 text-zinc-600 text-right pr-4 select-none opacity-50">{r.rightNum || ''}</span>
+                                                                    <span className="whitespace-pre">{r.rightCode}</span>
+                                                                </div>
+                                                            ))}
+                                                        </div>
+                                                    </div>
                                                 </div>
                                             ) : (
                                                 <div className={`p-4 font-mono text-[12px] text-zinc-300 whitespace-pre ${isNew ? "bg-[#102a1b]/10" : ""}`}>
