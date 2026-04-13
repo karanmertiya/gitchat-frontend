@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -36,17 +36,21 @@ export default function DialogTreeHome() {
   const [branches, setBranches] = useState<any[]>([]);
   const [recentWorkspaces, setRecentWorkspaces] = useState<{id: string, name: string}[]>([]);
 
-  // 🔥 NEW STATE: Editor vs Preview Tab
+  // Editor vs Preview Tab
   const [activeArtifact, setActiveArtifact] = useState<{code: string, lang: string, filename: string} | null>(null);
   const [editorTab, setEditorTab] = useState<'code' | 'preview'>('code');
   const [editorWidth, setEditorWidth] = useState(45); 
   
+  // 🔥 NEW STATE: Inline Copilot
+  const [editorSelection, setEditorSelection] = useState("");
+  const [copilotInput, setCopilotInput] = useState("");
+
   // GITHUB STATE
   const [githubModalOpen, setGithubModalOpen] = useState(false);
   const [githubRepo, setGithubRepo] = useState("");
   const [githubCommitMsg, setGithubCommitMsg] = useState("");
   const [githubToken, setGithubToken] = useState("");
-  const [githubPushAll, setGithubPushAll] = useState(true); // Default to pushing the whole branch
+  const [githubPushAll, setGithubPushAll] = useState(true); 
   const [githubPushing, setGithubPushing] = useState(false);
 
   const [isArtifactSidebarOpen, setIsArtifactSidebarOpen] = useState(false);
@@ -65,36 +69,34 @@ export default function DialogTreeHome() {
 
   const timelineArtifacts = extractAllArtifacts(messages);
 
-  // 🔥 THE MAGIC BUNDLER: Combines HTML, CSS, and JS into a working page
+  // 🔥 THE MAGIC BUNDLER (FIXED)
   const getPreviewHtml = () => {
-      const htmlArt = timelineArtifacts.find(a => a.lang === 'html' || a.filename.endsWith('.html'))?.code || '<div style="color:white; font-family:sans-serif; text-align:center; margin-top: 50px;"><h2>No HTML file found</h2><p>Ask the AI to generate an index.html file to see the preview!</p></div>';
-      const cssArt = timelineArtifacts.find(a => a.lang === 'css' || a.filename.endsWith('.css'))?.code || '';
-      const jsArt = timelineArtifacts.find(a => a.lang.includes('js') || a.filename.endsWith('.js'))?.code || '';
+      let html = timelineArtifacts.find(a => a.lang === 'html' || a.filename.endsWith('.html'))?.code || '<div style="color:black; font-family:sans-serif; text-align:center; margin-top: 50px;"><h2>No HTML file found</h2><p>Ask the AI to generate an index.html file to see the preview!</p></div>';
+      const css = timelineArtifacts.find(a => a.lang === 'css' || a.filename.endsWith('.css'))?.code || '';
+      const js = timelineArtifacts.find(a => a.lang.includes('js') || a.filename.endsWith('.js'))?.code || '';
 
-      return `
-          <!DOCTYPE html>
-          <html>
-          <head>
-              <meta charset="utf-8">
-              <meta name="viewport" content="width=device-width, initial-scale=1">
-              <style>
-                  /* Reset body margin for perfect iframe fit */
-                  body { margin: 0; padding: 0; }
-                  ${cssArt}
-              </style>
-          </head>
-          <body>
-              ${htmlArt}
-              <script>
-                  try {
-                      ${jsArt}
-                  } catch(e) {
-                      console.error("Preview JS Error: ", e);
-                  }
-              </script>
-          </body>
-          </html>
-      `;
+      // Smartly inject CSS into the head and JS into the body so it actually runs!
+      if (html.includes('</head>')) {
+          html = html.replace('</head>', `<style>${css}</style></head>`);
+      } else {
+          html = `<style>${css}</style>` + html;
+      }
+
+      if (html.includes('</body>')) {
+          html = html.replace('</body>', `<script>${js}</script></body>`);
+      } else {
+          html = html + `<script>${js}</script>`;
+      }
+      return html;
+  };
+
+  // 🔥 GET HIGHLIGHTED TEXT IN EDITOR
+  const handleEditorDidMount = (editor: any) => {
+      editor.onDidChangeCursorSelection((e: any) => {
+          const selection = editor.getModel().getValueInRange(e.selection);
+          if (selection.trim().length > 0) setEditorSelection(selection);
+          else setEditorSelection("");
+      });
   };
 
   const startResizing = useCallback((mouseDownEvent: React.MouseEvent) => {
@@ -227,20 +229,40 @@ export default function DialogTreeHome() {
       if (name) { window.location.href = `/?newWsName=${encodeURIComponent(name)}`; }
   };
 
-  const handleSend = async () => {
-    const finalPrompt = input.trim();
+  // 🔥 UPDATED CHAT FUNCTION (SMART @ MENTIONS & COPILOT OVERRIDE)
+  const handleSend = async (overridePrompt?: string) => {
+    const finalPrompt = (overridePrompt || input).trim();
     if (!finalPrompt && selectedFiles.length === 0) return;
     if (!activeBranch) return;
 
     setInput(""); 
-    const currentAttachments = [...selectedFiles];
+    let currentAttachments = [...selectedFiles];
     setSelectedFiles([]); 
     setLoading(true);
+
+    // ✨ SMART @ MENTION SYSTEM
+    // If user types @style.css, we grab the current code from the Virtual File System and attach it!
+    const mentions = finalPrompt.match(/@([\w.-]+\.\w+)/g);
+    if (mentions) {
+        mentions.forEach(mention => {
+            const filename = mention.substring(1);
+            const file = timelineArtifacts.find(a => a.filename === filename);
+            if (file && !currentAttachments.find(a => a.name === filename)) {
+                // Secretly attach the file code base64 encoded
+                currentAttachments.push({
+                    name: filename,
+                    base64: `data:text/plain;base64,${btoa(unescape(encodeURIComponent(file.code)))}`,
+                    type: 'text/plain',
+                    ext: file.lang
+                });
+            }
+        });
+    }
 
     const lastMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
     let displayPrompt = finalPrompt;
     if (currentAttachments.length > 0) {
-       displayPrompt += `\n\n*(Uploading ${currentAttachments.length} attachments...)*`;
+       displayPrompt += `\n\n*(Uploaded ${currentAttachments.length} Context Artifacts)*`;
     }
     setMessages(prev => [...prev, { role: 'user', content: displayPrompt, id: 'temp' }]);
 
@@ -251,6 +273,15 @@ export default function DialogTreeHome() {
       setMessages(prev => prev.filter(m => m.id !== 'temp'));
       alert(`Failed to get AI response: \n\n${err.message}`);
     } finally { setLoading(false); }
+  };
+
+  // 🔥 COPILOT INLINE EDITOR SUBMIT
+  const handleCopilotSubmit = () => {
+      if (!copilotInput.trim() || !activeArtifact || !editorSelection) return;
+      const engineeredPrompt = `I need to modify \`${activeArtifact.filename}\`.\n\nPlease update this specific part of the code:\n\`\`\`${activeArtifact.lang}\n${editorSelection}\n\`\`\`\n\nInstructions: ${copilotInput}`;
+      setEditorSelection("");
+      setCopilotInput("");
+      handleSend(engineeredPrompt);
   };
 
   const submitFork = async () => {
@@ -302,14 +333,12 @@ export default function DialogTreeHome() {
     } catch(e: any) { alert(`Merge failed: ${e.message}`); } finally { setLoading(false); }
   };
 
-  // 🔥 UPDATED GITHUB PUSH FUNCTION (Accepts Array of Files)
   const executeGithubPush = async () => {
       if (!githubRepo || !githubCommitMsg || !activeArtifact || !githubToken) {
           alert("Please fill in all repository and token fields!"); return;
       }
       setGithubPushing(true);
       try {
-          // If toggle is true, map all artifacts. Else, just map the active one.
           const filesToSend = githubPushAll 
               ? timelineArtifacts.map(art => ({ path: art.filename, content: art.code }))
               : [{ path: activeArtifact.filename, content: activeArtifact.code }];
@@ -451,6 +480,7 @@ export default function DialogTreeHome() {
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans relative overflow-hidden">
       
+      {/* FLOATING MULTIPLAYER CHITCHAT */}
       <div className="absolute bottom-6 right-6 z-50">
          {isChitchatOpen ? (
             <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-80 shadow-2xl flex flex-col h-[450px] overflow-hidden">
@@ -500,7 +530,7 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* 🔥 GITHUB PUSH MODAL */}
+      {/* 🔥 GITHUB PUSH MODAL (UPDATED UI) */}
       {githubModalOpen && activeArtifact && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
@@ -514,7 +544,10 @@ export default function DialogTreeHome() {
                     <input 
                         type="text" 
                         value={githubRepo} 
-                        onChange={e => { setGithubRepo(e.target.value); localStorage.setItem('dialogtree_github_repo', e.target.value); }} 
+                        onChange={e => {
+                            setGithubRepo(e.target.value);
+                            localStorage.setItem('dialogtree_github_repo', e.target.value);
+                        }} 
                         placeholder="e.g. karanmertiya/dialogtree" 
                         className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" 
                     />
@@ -528,14 +561,16 @@ export default function DialogTreeHome() {
                     <input 
                         type="password" 
                         value={githubToken} 
-                        onChange={e => { setGithubToken(e.target.value); localStorage.setItem('dialogtree_github_token', e.target.value); }} 
+                        onChange={e => {
+                            setGithubToken(e.target.value);
+                            localStorage.setItem('dialogtree_github_token', e.target.value);
+                        }} 
                         placeholder="ghp_xxxxxxxxxxxx" 
                         className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" 
                     />
                     <p className="text-[10px] text-zinc-500 mt-1">Needs 'repo' scope. 🔒 Saved securely in Local Storage.</p>
                 </div>
 
-                {/* 🔥 NEW: PUSH TOGGLE */}
                 <div className="bg-zinc-950/50 border border-zinc-800 rounded-lg p-3">
                     <label className="flex items-center gap-2 cursor-pointer text-sm text-zinc-300">
                         <input type="checkbox" checked={githubPushAll} onChange={(e) => setGithubPushAll(e.target.checked)} className="rounded bg-zinc-900 border-zinc-700 text-indigo-600 focus:ring-indigo-600" />
@@ -716,7 +751,7 @@ export default function DialogTreeHome() {
               )}
               <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }} disabled={switching || !activeBranch} placeholder={`Message #${activeBranch?.name || '...'}`} className="w-full bg-transparent border-none py-3 px-2 focus:outline-none focus:ring-0 text-[15px] resize-none overflow-y-auto" style={{ minHeight: '50px', maxHeight: '200px', height: input ? 'auto' : '50px' }} />
             </div>
-            <button onClick={handleSend} disabled={loading || switching || (!input.trim() && selectedFiles.length === 0)} className="p-3.5 mb-1 bg-indigo-600 rounded-2xl hover:bg-indigo-500 disabled:opacity-50 disabled:bg-zinc-800 transition-all active:scale-95 shrink-0"><Send size={18} className={(input.trim() || selectedFiles.length > 0) ? "text-white" : "text-zinc-400"} /></button>
+            <button onClick={() => handleSend()} disabled={loading || switching || (!input.trim() && selectedFiles.length === 0)} className="p-3.5 mb-1 bg-indigo-600 rounded-2xl hover:bg-indigo-500 disabled:opacity-50 disabled:bg-zinc-800 transition-all active:scale-95 shrink-0"><Send size={18} className={(input.trim() || selectedFiles.length > 0) ? "text-white" : "text-zinc-400"} /></button>
           </div>
         </div>
       </main>
@@ -759,7 +794,7 @@ export default function DialogTreeHome() {
          </aside>
       )}
 
-      {/* 🔥 RESIZABLE ARTIFACT EDITOR PANELS WITH PREVIEW */}
+      {/* 🔥 RESIZABLE ARTIFACT EDITOR PANELS WITH PREVIEW AND COPILOT */}
       {activeArtifact && (
         <>
             <div 
@@ -772,7 +807,6 @@ export default function DialogTreeHome() {
                         <Code size={18} className="text-indigo-400 shrink-0"/>
                         <span className="text-sm font-semibold text-zinc-200 truncate">{activeArtifact.filename}</span>
                         
-                        {/* 🔥 CODE / PREVIEW TOGGLE */}
                         <div className="flex bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 ml-4 shrink-0">
                             <button onClick={() => setEditorTab('code')} className={`px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors ${editorTab === 'code' ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Code</button>
                             <button onClick={() => setEditorTab('preview')} className={`flex items-center gap-1 px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors ${editorTab === 'preview' ? 'bg-emerald-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}><Play size={12}/> Preview</button>
@@ -794,11 +828,31 @@ export default function DialogTreeHome() {
                             theme="vs-dark"
                             value={activeArtifact.code}
                             onChange={(val) => setActiveArtifact({ ...activeArtifact, code: val || '' })}
+                            onMount={handleEditorDidMount}
                             options={{ minimap: { enabled: false }, fontSize: 13, wordWrap: 'on', padding: { top: 16 }, scrollBeyondLastLine: false, smoothScrolling: true }}
                         />
+                        
+                        {/* 🔥 NEW: FLOATING COPILOT EDITOR */}
+                        {editorSelection && (
+                            <div className="absolute bottom-6 right-6 z-50 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl p-4 w-80 animate-in fade-in slide-in-from-bottom-4">
+                                <div className="text-xs font-bold text-indigo-400 mb-3 flex items-center gap-1"><Sparkles size={14}/> Copilot: Edit Selection</div>
+                                <textarea
+                                    value={copilotInput}
+                                    onChange={e => setCopilotInput(e.target.value)}
+                                    placeholder="e.g. Turn this loop into a map function..."
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-indigo-500 mb-3 resize-none shadow-inner"
+                                    rows={3}
+                                    autoFocus
+                                />
+                                <div className="flex justify-end gap-2">
+                                    <button onClick={() => { setEditorSelection(""); setCopilotInput(""); }} className="text-xs text-zinc-500 hover:text-zinc-300 px-3 py-1.5 font-medium transition-colors">Cancel</button>
+                                    <button onClick={handleCopilotSubmit} disabled={!copilotInput.trim()} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs px-4 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all shadow-md shadow-indigo-900/20"><Send size={12}/> Ask AI</button>
+                                </div>
+                            </div>
+                        )}
                     </div>
                     
-                    {/* 🔥 THE LIVE WEB PREVIEW */}
+                    {/* The Live Web Preview */}
                     <div className={`absolute inset-0 bg-white transition-opacity ${editorTab === 'preview' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
                         <iframe 
                             title="live-preview"
