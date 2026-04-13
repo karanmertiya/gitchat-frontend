@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, Maximize2, MessageCircle, Share2, Download, Trash2, User, Library, DownloadCloud, ChevronDown, Check, AlertCircle } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, Maximize2, MessageCircle, Share2, Download, Trash2, User, Library, DownloadCloud, ChevronDown } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -37,7 +37,11 @@ export default function DialogTreeHome() {
   const [chitchatLoading, setChitchatLoading] = useState(false);
 
   const [forkModal, setForkModal] = useState({ isOpen: false, messageId: null as string | null, name: "", isEphemeral: true });
+  
   const [prModalOpen, setPrModalOpen] = useState(false);
+  // 🔥 NEW: State to hold the artifacts from the main branch for Diff comparison
+  const [mainArtifacts, setMainArtifacts] = useState<{code: string, lang: string}[]>([]);
+  const [isDiffLoading, setIsDiffLoading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -198,12 +202,45 @@ export default function DialogTreeHome() {
     try { await api.toggleEphemeral(activeBranch.id); } catch (err) {}
   };
 
-  const initiateMerge = () => {
+  // 🔥 UPGRADED: Extracts artifacts generically so it can be used for any timeline (Active or Main)
+  const extractAllArtifacts = (msgs: any[]) => {
+    const allArtifacts: { code: string, lang: string, msgIndex: number }[] = [];
+    msgs.forEach((m, idx) => {
+       if (m.role === 'ai' || m.role === 'system') {
+          const regex = /```([a-zA-Z0-9_+-]*)\s*\n([\s\S]*?)```/g;
+          let match;
+          while ((match = regex.exec(m.content)) !== null) {
+             allArtifacts.push({ lang: match[1] || 'text', code: match[2].trim(), msgIndex: idx });
+          }
+       }
+    });
+    return allArtifacts;
+  };
+
+  // 🔥 UPGRADED: Fetch main branch artifacts before opening PR
+  const initiateMerge = async () => {
     if (!activeBranch || activeBranch.name === 'main') { 
         alert("You are already in the main timeline! You must be in a branch to merge."); 
         return; 
     }
+    
     setPrModalOpen(true);
+    setIsDiffLoading(true);
+    
+    try {
+        const mainBranch = branches.find(b => b.name === 'main');
+        if (mainBranch) {
+            const res = await api.getMessages(mainBranch.id);
+            if (res.messages) {
+                const oldArts = extractAllArtifacts(res.messages);
+                setMainArtifacts(oldArts);
+            }
+        }
+    } catch (err) {
+        console.error("Failed to load main artifacts for diff", err);
+    }
+    
+    setIsDiffLoading(false);
   };
 
   const confirmMerge = async () => {
@@ -277,7 +314,6 @@ export default function DialogTreeHome() {
     setExportMenuOpen(false);
   };
 
-  // 🔥 UPGRADED: Bulletproof PDF Exporter that uses a hidden textarea to prevent string escaping crashes
   const exportPDF = () => {
     if (!activeBranch || messages.length === 0) return;
     const mdContent = generateMarkdownString();
@@ -292,7 +328,7 @@ export default function DialogTreeHome() {
         <html>
         <head>
             <title>Timeline Export: ${activeBranch.name}</title>
-            <link rel="stylesheet" href="[https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-light.min.css](https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-light.min.css)">
+            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-light.min.css">
             <style>
                 body { padding: 40px; background: white; }
                 .markdown-body { box-sizing: border-box; min-width: 200px; max-width: 980px; margin: 0 auto; font-family: -apple-system, sans-serif; }
@@ -313,7 +349,7 @@ export default function DialogTreeHome() {
                     }
                 }
             </script>
-            <script src="[https://cdn.jsdelivr.net/npm/marked/marked.min.js](https://cdn.jsdelivr.net/npm/marked/marked.min.js)" onload="renderPDF()"></script>
+            <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js" onload="renderPDF()"></script>
         </body>
         </html>
     `);
@@ -370,22 +406,7 @@ export default function DialogTreeHome() {
     return depth;
   };
 
-  const extractAllArtifacts = () => {
-    const allArtifacts: { code: string, lang: string, msgIndex: number }[] = [];
-    messages.forEach((m, idx) => {
-       if (m.role === 'ai' || m.role === 'system') {
-          // 🔥 UPGRADED: More forgiving regex to catch slightly malformed AI code blocks
-          const regex = /```([a-zA-Z0-9_+-]*)\s*\n([\s\S]*?)```/g;
-          let match;
-          while ((match = regex.exec(m.content)) !== null) {
-             allArtifacts.push({ lang: match[1] || 'text', code: match[2].trim(), msgIndex: idx });
-          }
-       }
-    });
-    return allArtifacts;
-  };
-
-  const timelineArtifacts = extractAllArtifacts();
+  const timelineArtifacts = extractAllArtifacts(messages);
 
   if (isInitializing) {
      return (
@@ -499,10 +520,10 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* PR MERGE MODAL */}
+      {/* 🔥 UPGRADED: VISUAL TRUE SIDE-BY-SIDE DIFF VIEWER */}
       {prModalOpen && (
         <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-6">
-          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl w-full max-w-4xl max-h-[85vh] shadow-2xl flex flex-col overflow-hidden">
+          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl w-full max-w-5xl max-h-[90vh] shadow-2xl flex flex-col overflow-hidden">
             
             <div className="p-5 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center">
                <div>
@@ -519,33 +540,65 @@ export default function DialogTreeHome() {
                   <div className="bg-zinc-800 text-zinc-300 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm font-mono"><GitBranch size={16} className="text-zinc-400"/> main</div>
                </div>
 
-               <div className="bg-emerald-900/10 border border-emerald-900/30 rounded-xl p-4">
-                  <h3 className="text-emerald-400 text-sm font-semibold flex items-center gap-2 mb-2"><CheckCircle2 size={16}/> Able to merge</h3>
-                  <p className="text-zinc-300 text-sm leading-relaxed">
-                     This will permanently delete the <strong>{activeBranch?.name}</strong> timeline. An AI compiler will read the {messages.length} messages in this branch, extract the final code/decisions, and inject a single cleanly formatted "Squash Commit" into your main timeline.
-                  </p>
-               </div>
+               {isDiffLoading ? (
+                   <div className="flex flex-col items-center justify-center py-12 text-zinc-500 gap-3">
+                       <Loader2 size={24} className="animate-spin text-emerald-500" />
+                       <p className="text-sm">Analyzing differences against main timeline...</p>
+                   </div>
+               ) : (
+                   <div>
+                      <h3 className="text-zinc-300 text-sm font-semibold mb-3">Artifacts to be Merged ({timelineArtifacts.length})</h3>
+                      {timelineArtifacts.length === 0 ? (
+                         <div className="text-center p-8 border border-dashed border-zinc-800 rounded-xl text-zinc-500 text-sm">No code blocks were generated in this timeline. The AI will summarize the conversation text instead.</div>
+                      ) : (
+                         <div className="flex flex-col gap-6">
+                            {timelineArtifacts.map((art, idx) => {
+                               const oldArt = mainArtifacts.slice().reverse().find(a => a.lang === art.lang);
+                               const isNew = !oldArt;
+                               const isUnchanged = oldArt && oldArt.code === art.code;
 
-               <div>
-                  <h3 className="text-zinc-300 text-sm font-semibold mb-3">Artifacts to be Merged ({timelineArtifacts.length})</h3>
-                  {timelineArtifacts.length === 0 ? (
-                     <div className="text-center p-8 border border-dashed border-zinc-800 rounded-xl text-zinc-500 text-sm">No code blocks were generated in this timeline. The AI will summarize the conversation text instead.</div>
-                  ) : (
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                        {timelineArtifacts.map((art, idx) => (
-                           <div key={idx} className="bg-[#0d1117] border border-zinc-800 rounded-lg p-4">
-                              <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-500 mb-2 block">{art.lang} snippet</span>
-                              <pre className="text-xs text-zinc-300 overflow-x-auto font-mono line-clamp-6">{art.code}</pre>
-                           </div>
-                        ))}
-                     </div>
-                  )}
-               </div>
+                               return (
+                                   <div key={idx} className="bg-[#0d1117] border border-zinc-800 rounded-xl overflow-hidden shadow-lg">
+                                        <div className="bg-zinc-900 px-4 py-2 border-b border-zinc-800 flex justify-between items-center">
+                                            <span className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 flex items-center gap-2"><Code size={12}/> {art.lang} target</span>
+                                            {isNew ? <span className="text-[10px] text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded font-medium border border-emerald-400/20">New Addition</span> :
+                                             isUnchanged ? <span className="text-[10px] text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded font-medium border border-zinc-700">Unchanged</span> :
+                                             <span className="text-[10px] text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded font-medium border border-amber-400/20">Modified</span>}
+                                        </div>
+
+                                        {/* SCROLL BUG FIXED: Replaced clamping with overflow-auto and max-height */}
+                                        {oldArt && !isUnchanged ? (
+                                            <div className="flex divide-x divide-zinc-800">
+                                                <div className="w-1/2 bg-[#2a1315]/20 flex flex-col">
+                                                    <div className="text-[10px] text-red-400/70 px-3 py-1.5 border-b border-zinc-800/50 uppercase tracking-widest bg-[#2a1315]/40 shrink-0">Main (Previous)</div>
+                                                    <div className="flex-1 overflow-auto max-h-80 p-4">
+                                                        <pre className="text-[12px] text-zinc-300 font-mono leading-relaxed">{oldArt.code}</pre>
+                                                    </div>
+                                                </div>
+                                                <div className="w-1/2 bg-[#102a1b]/20 flex flex-col">
+                                                    <div className="text-[10px] text-emerald-400/70 px-3 py-1.5 border-b border-zinc-800/50 uppercase tracking-widest bg-[#102a1b]/40 shrink-0">Branch (New)</div>
+                                                    <div className="flex-1 overflow-auto max-h-80 p-4">
+                                                        <pre className="text-[12px] text-zinc-300 font-mono leading-relaxed">{art.code}</pre>
+                                                    </div>
+                                                </div>
+                                            </div>
+                                        ) : (
+                                            <div className={`overflow-auto max-h-80 p-4 ${isNew ? "bg-[#102a1b]/10" : ""}`}>
+                                                <pre className="text-[12px] text-zinc-300 font-mono leading-relaxed">{art.code}</pre>
+                                            </div>
+                                        )}
+                                   </div>
+                               );
+                            })}
+                         </div>
+                      )}
+                   </div>
+               )}
             </div>
 
             <div className="p-5 border-t border-zinc-800 bg-zinc-900/50 flex justify-end gap-3">
                <button onClick={() => setPrModalOpen(false)} className="px-5 py-2.5 text-sm text-zinc-400 hover:text-zinc-200 font-medium transition-colors">Cancel</button>
-               <button onClick={confirmMerge} disabled={loading} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-sm font-semibold shadow-lg shadow-emerald-900/20 transition-all flex items-center gap-2">
+               <button onClick={confirmMerge} disabled={loading || isDiffLoading} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-sm font-semibold shadow-lg shadow-emerald-900/20 transition-all flex items-center gap-2">
                   {loading ? <Loader2 size={16} className="animate-spin"/> : <GitMerge size={16} />} Squash and Merge
                </button>
             </div>
