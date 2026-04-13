@@ -1,10 +1,14 @@
 "use client";
 import React, { useState, useEffect, useRef } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, Maximize2, MessageCircle, Share2, Download, Trash2, User, Library, DownloadCloud, ChevronDown } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle2, MessageCircle, Share2, Download, Trash2, User, Library, DownloadCloud, ChevronDown } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
+
+// 🔥 Import modularized tools and components
+import { getBranchDepth, downloadCode, extractAllArtifacts, exportMD, exportPDF } from '@/lib/utils';
+import MergeRequestModal from '@/components/MergeRequestModal';
 
 export default function DialogTreeHome() {
   const [session, setSession] = useState<any>(null);
@@ -62,20 +66,15 @@ export default function DialogTreeHome() {
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const joinId = urlParams.get('workspace');
-
         const data = await api.init(session.user.id, "My First Workspace", joinId);
-        
         if (data.error) throw new Error(data.error);
         if (!data.workspace) throw new Error("Backend connection failed.");
-
         setWorkspace(data.workspace);
         setActiveBranch(data.branch);
         const branchData = await api.getBranches(data.workspace.id);
         setBranches(branchData.branches);
-        
         setIsInitializing(false);
       } catch (err: any) {
-        console.error("🔥 CRITICAL SETUP FAILURE:", err);
         alert(`Backend Error: ${err.message}\n\nLogging out to prevent frozen UI.`);
         await supabase.auth.signOut();
         setSession(null);
@@ -93,9 +92,7 @@ export default function DialogTreeHome() {
       try {
         const historyData = await api.getMessages(activeBranch.id);
         setMessages(historyData.messages || []);
-      } catch (err) {
-        console.error("Failed to load history:", err);
-      } finally {
+      } catch (err) {} finally {
         setSwitching(false);
       }
     };
@@ -104,9 +101,7 @@ export default function DialogTreeHome() {
 
   useEffect(() => {
     if (!workspace) return;
-    
     api.getChitchat(workspace.id).then(res => setChitchatMsgs(res.messages || []));
-
     const channel = supabase.channel('room_updates')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
         if (activeBranch) api.getMessages(activeBranch.id).then(res => setMessages(res.messages || []));
@@ -118,7 +113,6 @@ export default function DialogTreeHome() {
         api.getBranches(workspace.id).then(res => setBranches(res.branches || []));
       })
       .subscribe();
-
     return () => { supabase.removeChannel(channel); }
   }, [workspace, activeBranch]);
 
@@ -160,7 +154,6 @@ export default function DialogTreeHome() {
     setLoading(true);
 
     const lastMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
-    
     let displayPrompt = finalPrompt;
     if (currentAttachments.length > 0) {
        displayPrompt += `\n\n*(Uploading ${currentAttachments.length} attachments...)*`;
@@ -201,81 +194,23 @@ export default function DialogTreeHome() {
     try { await api.toggleEphemeral(activeBranch.id); } catch (err) {}
   };
 
-  const extractAllArtifacts = (msgs: any[]) => {
-    const allArtifacts: { code: string, lang: string, filename: string, msgIndex: number }[] = [];
-    
-    const ticks = ['`', '`', '`'].join('');
-    const pattern = ticks + '([a-zA-Z0-9_+-]*)(?:.*?(?:filename|name|file)=["\']?([^"\'\\s]+)["\']?)?[ \\t]*\\n([\\s\\S]*?)' + ticks;
-    const regex = new RegExp(pattern, 'g');
-
-    msgs.forEach((m, idx) => {
-       if (m.role === 'ai' || m.role === 'system') {
-          let match;
-          regex.lastIndex = 0;
-          while ((match = regex.exec(m.content)) !== null) {
-             let lang = match[1] ? String(match[1]).trim() : 'text';
-             let filename = match[2] ? String(match[2]).trim() : '';
-             let code = match[3] ? String(match[3]).trim() : '';
-             
-             // 1. Try Regex for the first line comment
-             if (!filename) {
-                 const firstLine = code.split('\n')[0] || '';
-                 const nameMatch = firstLine.match(/^(?:\/\/#|\/\/|#|--)\s*(?:filename\s*[:=]\s*)?(.+\.\w+)/i);
-                 
-                 if (nameMatch && nameMatch[1]) {
-                     filename = nameMatch[1].trim();
-                     const newlineIndex = code.indexOf('\n');
-                     if (newlineIndex !== -1) {
-                         code = code.substring(newlineIndex + 1).trim();
-                     }
-                 }
-             }
-
-             // 2. CLAUDE-STYLE FALLBACK: Intelligently guess filename from code content
-             if (!filename) {
-                 const ext = lang === 'text' ? 'txt' : lang.replace('javascript', 'js').replace('typescript', 'ts').replace('python', 'py');
-                 
-                 const classMatch = code.match(/class\s+([A-Z][a-zA-Z0-9_]*)/);
-                 const funcMatch = code.match(/(?:function|const|let)\s+([a-zA-Z0-9_]+)/);
-                 
-                 if (classMatch && classMatch[1]) {
-                     filename = `${classMatch[1]}.${ext}`;
-                 } else if (funcMatch && funcMatch[1]) {
-                     filename = `${funcMatch[1]}.${ext}`;
-                 } else {
-                     filename = `artifact_${idx}_${allArtifacts.length + 1}.${ext}`;
-                 }
-             }
-
-             allArtifacts.push({ lang, filename, code, msgIndex: idx });
-          }
-       }
-    });
-    return allArtifacts;
-  };
-
+  // 🔥 TRIGGER PR MODAL (Logic calls external extractors)
   const initiateMerge = async () => {
     if (!activeBranch || activeBranch.name === 'main') { 
         alert("You are already in the main timeline! You must be in a branch to merge."); 
         return; 
     }
-    
     setPrModalOpen(true);
     setIsDiffLoading(true);
-    
     try {
         const mainBranch = branches.find(b => b.name === 'main');
         if (mainBranch) {
             const res = await api.getMessages(mainBranch.id);
             if (res.messages) {
-                const oldArts = extractAllArtifacts(res.messages);
-                setMainArtifacts(oldArts);
+                setMainArtifacts(extractAllArtifacts(res.messages));
             }
         }
-    } catch (err) {
-        console.error("Failed to load main artifacts for diff", err);
-    }
-    
+    } catch (err) {}
     setIsDiffLoading(false);
   };
 
@@ -289,7 +224,6 @@ export default function DialogTreeHome() {
     try {
       const res = await api.merge(activeBranch.id, mainBranch.id, latestSourceMsgId, null, messages);
       if(res.error) throw new Error(res.error);
-      
       await api.deleteBranch(activeBranch.id);
       setActiveBranch(mainBranch); 
     } catch(e: any) {
@@ -299,43 +233,12 @@ export default function DialogTreeHome() {
     }
   };
 
-  const computeLineDiff = (oldStr: string, newStr: string) => {
-      const oldL = oldStr.split('\n');
-      const newL = newStr.split('\n');
-      const dp = Array(oldL.length + 1).fill(null).map(() => Array(newL.length + 1).fill(0));
-      
-      for (let i = 1; i <= oldL.length; i++) {
-          for (let j = 1; j <= newL.length; j++) {
-              if (oldL[i - 1] === newL[j - 1]) dp[i][j] = dp[i - 1][j - 1] + 1;
-              else dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
-          }
-      }
-      
-      const diff = [];
-      let i = oldL.length, j = newL.length;
-      while (i > 0 || j > 0) {
-          if (i > 0 && j > 0 && oldL[i - 1] === newL[j - 1]) {
-              diff.unshift({ type: 'unchanged', value: oldL[i - 1] });
-              i--; j--;
-          } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-              diff.unshift({ type: 'added', value: newL[j - 1] });
-              j--;
-          } else if (i > 0 && (j === 0 || dp[i][j - 1] < dp[i - 1][j])) {
-              diff.unshift({ type: 'removed', value: oldL[i - 1] });
-              i--;
-          }
-      }
-      return diff;
-  };
-
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
     const files = Array.from(e.target.files);
-    
     if (files.some(f => f.size > 1024 * 1024 * 10)) { 
       alert("One of your files is too large. Keep under 10MB per file."); return; 
     }
-
     const newFiles = await Promise.all(files.map(file => {
       return new Promise<{name: string, base64: string, type: string, ext: string}>((resolve) => {
         const reader = new FileReader();
@@ -349,98 +252,11 @@ export default function DialogTreeHome() {
     if(fileInputRef.current) fileInputRef.current.value = ''; 
   };
 
-  const downloadCode = (codeToDownload: string, filename: string) => {
-    const blob = new Blob([codeToDownload], { type: 'text/plain' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = filename;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-  };
-
-  const generateMarkdownString = () => {
-    const date = new Date().toLocaleDateString();
-    let mdContent = `# Timeline Export: ${activeBranch?.name || 'Workspace'}\n**Date:** ${date}\n\n---\n\n`;
-    
-    messages.forEach((m) => {
-      const roleName = m.role === 'user' ? '👤 **User**' : m.role === 'system' ? '⚙️ **System**' : '🤖 **AI Assistant**';
-      const cleanContent = m.content.replace(/---START_ATTACHMENT:(.*?)---[\s\S]*?---END_ATTACHMENT---/g, '> 📎 *Attached Document: `$1`*');
-      mdContent += `### ${roleName}\n${cleanContent}\n\n---\n\n`;
-    });
-    return mdContent;
-  };
-
-  const exportMD = () => {
-    if (!activeBranch || messages.length === 0) return;
-    const blob = new Blob([generateMarkdownString()], { type: 'text/markdown' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url; a.download = `Timeline_${activeBranch.name}.md`;
-    document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
-    setExportMenuOpen(false);
-  };
-
-  const exportPDF = () => {
-    if (!activeBranch || messages.length === 0) return;
-    const mdContent = generateMarkdownString();
-    
-    const printWindow = window.open('', '_blank');
-    if (!printWindow) { alert("Please allow pop-ups to generate the PDF."); return; }
-
-    const escapedMd = mdContent.replace(/</g, '&lt;').replace(/>/g, '&gt;');
-
-    printWindow.document.write(`
-        <!DOCTYPE html>
-        <html>
-        <head>
-            <title>Timeline Export: ${activeBranch.name}</title>
-            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-dark.min.css">
-            <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css">
-            <style>
-                @page { margin: 10mm; size: auto; }
-                body { padding: 20px; margin: 0; background: #0d1117; color: #c9d1d9; -webkit-print-color-adjust: exact; color-adjust: exact; }
-                .markdown-body { box-sizing: border-box; max-width: 100% !important; margin: 0 auto; font-family: -apple-system, sans-serif; background: #0d1117; }
-                pre, code { white-space: pre-wrap !important; word-break: break-word !important; background: #161b22 !important; border: 1px solid #30363d; border-radius: 6px; }
-                img { max-width: 100% !important; page-break-inside: avoid; }
-                pre, blockquote, tr, td, th { page-break-inside: avoid; }
-                .header { border-bottom: 1px solid #30363d; padding-bottom: 10px; margin-bottom: 20px; font-family: monospace; color: #8b949e; font-size: 12px; }
-            </style>
-        </head>
-        <body class="markdown-body">
-            <div class="header">DialogTree Workspace // Branch: ${activeBranch.name} // Generated: ${new Date().toLocaleString()}</div>
-            <textarea id="raw-md" style="display:none;">${escapedMd}</textarea>
-            <article id="content">Building beautiful PDF... Please wait.</article>
-            <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
-            <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
-            <script>
-                setTimeout(() => {
-                    try {
-                        const md = document.getElementById('raw-md').value;
-                        marked.setOptions({
-                            highlight: function(code, lang) {
-                                const language = hljs.getLanguage(lang) ? lang : 'plaintext';
-                                return hljs.highlight(code, { language }).value;
-                            }
-                        });
-                        document.getElementById('content').innerHTML = marked.parse(md);
-                        setTimeout(() => { window.print(); window.close(); }, 800);
-                    } catch(e) {
-                        document.getElementById('content').innerHTML = "Failed to render PDF: " + e.message;
-                    }
-                }, 100);
-            </script>
-        </body>
-        </html>
-    `);
-    printWindow.document.close();
-    setExportMenuOpen(false);
-  };
-
   const handleChitchatSend = async () => {
     if (!chitchatInput.trim() || !workspace) return;
     const msg = chitchatInput;
     setChitchatInput("");
     const userName = session.user.user_metadata?.full_name || session.user.email.split('@')[0];
-    
     if (msg.includes('@gemini')) {
         setChitchatLoading(true);
         try {
@@ -473,15 +289,6 @@ export default function DialogTreeHome() {
         </div>
       ) : (<code className="bg-zinc-800 text-indigo-300 px-1.5 py-0.5 rounded-md text-[13px]" {...props}>{children}</code>)
     }
-  };
-
-  const getBranchDepth = (branch: any) => {
-    let depth = 0; let curr = branch;
-    while (curr.parent_branch_id) {
-        depth++;
-        curr = branches.find(b => b.id === curr.parent_branch_id) || {};
-    }
-    return depth;
   };
 
   const timelineArtifacts = extractAllArtifacts(messages);
@@ -528,11 +335,9 @@ export default function DialogTreeHome() {
               <form onSubmit={handleEmailAuth} className="space-y-4">
                 {authError && <div className="bg-red-500/10 border border-red-500/50 text-red-400 text-sm p-3 rounded-lg">{authError}</div>}
                 {verifyMessage && <div className="bg-emerald-500/10 border border-emerald-500/50 text-emerald-400 text-sm p-3 rounded-lg flex items-start gap-2"><CheckCircle2 size={18} className="shrink-0 mt-0.5" /><p>{verifyMessage}</p></div>}
-                
                 {isSignUp && (
                   <div><label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Full Name</label><input type="text" value={authName} onChange={e => setAuthName(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500" placeholder="Jane Doe" /></div>
                 )}
-                
                 <div><label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Email</label><input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500" placeholder="engineer@example.com" /></div>
                 <div><label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Password</label><input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500" placeholder="••••••••" /></div>
                 <button type="submit" disabled={authLoading} className="w-full bg-white hover:bg-zinc-200 text-zinc-950 font-semibold py-3 rounded-xl transition-all disabled:opacity-50 flex justify-center items-center gap-2 mt-4">{authLoading ? <Loader2 size={18} className="animate-spin text-zinc-500" /> : null}{isSignUp ? 'Create Account' : 'Sign In'}</button>
@@ -598,119 +403,17 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* PR MERGE MODAL (WITH TRUE SIDE-BY-SIDE DIFF VIEWER) */}
-      {prModalOpen && (
-        <div className="absolute inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-6">
-          <div className="bg-zinc-950 border border-zinc-700 rounded-2xl w-full max-w-[95vw] lg:max-w-6xl max-h-[90vh] shadow-2xl flex flex-col overflow-hidden">
-            <div className="p-5 border-b border-zinc-800 bg-zinc-900/50 flex justify-between items-center">
-               <div>
-                  <h2 className="text-xl font-bold flex items-center gap-2 text-zinc-100"><GitMerge size={22} className="text-emerald-400"/> Open Merge Request</h2>
-                  <p className="text-sm text-zinc-400 mt-1">Review side-by-side differences before squashing into the main branch.</p>
-               </div>
-               <button onClick={() => setPrModalOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={24}/></button>
-            </div>
-            <div className="flex-1 overflow-y-auto p-6 bg-zinc-950 flex flex-col gap-6">
-               <div className="flex items-center gap-4 bg-zinc-900 p-4 rounded-xl border border-zinc-800">
-                  <div className="bg-zinc-800 text-zinc-300 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm font-mono"><GitBranch size={16} className="text-indigo-400"/> {activeBranch?.name}</div>
-                  <span className="text-zinc-500">→</span>
-                  <div className="bg-zinc-800 text-zinc-300 px-3 py-1.5 rounded-lg flex items-center gap-2 text-sm font-mono"><GitBranch size={16} className="text-zinc-400"/> main</div>
-               </div>
-               {isDiffLoading ? (
-                   <div className="flex flex-col items-center justify-center py-12 text-zinc-500 gap-3">
-                       <Loader2 size={24} className="animate-spin text-emerald-500" />
-                       <p className="text-sm">Analyzing side-by-side differences against main...</p>
-                   </div>
-               ) : (
-                   <div>
-                      <h3 className="text-zinc-300 text-sm font-semibold mb-3">Files Changed ({timelineArtifacts.length})</h3>
-                      {timelineArtifacts.length === 0 ? (
-                         <div className="text-center p-8 border border-dashed border-zinc-800 rounded-xl text-zinc-500 text-sm">No code files were generated in this timeline. The AI will summarize the conversation text instead.</div>
-                      ) : (
-                         <div className="flex flex-col gap-8">
-                            {timelineArtifacts.map((art, idx) => {
-                               const oldArt = mainArtifacts.slice().reverse().find(a => a.filename === art.filename);
-                               const isNew = !oldArt;
-                               const isUnchanged = oldArt && oldArt.code === art.code;
-                               
-                               let sbsRows: {leftNum: number|null, leftCode: string, leftType: string, rightNum: number|null, rightCode: string, rightType: string}[] = [];
-                               if (oldArt && !isUnchanged) {
-                                   const diffLines = computeLineDiff(oldArt.code, art.code);
-                                   let lLine = 1, rLine = 1;
-                                   for (let i = 0; i < diffLines.length; i++) {
-                                       const line = diffLines[i];
-                                       if (line.type === 'unchanged') {
-                                           sbsRows.push({ leftNum: lLine++, leftCode: line.value, leftType: 'unchanged', rightNum: rLine++, rightCode: line.value, rightType: 'unchanged' });
-                                       } else if (line.type === 'removed') {
-                                           if (i + 1 < diffLines.length && diffLines[i+1].type === 'added') {
-                                               sbsRows.push({ leftNum: lLine++, leftCode: line.value, leftType: 'removed', rightNum: rLine++, rightCode: diffLines[i+1].value, rightType: 'added' });
-                                               i++; 
-                                           } else {
-                                               sbsRows.push({ leftNum: lLine++, leftCode: line.value, leftType: 'removed', rightNum: null, rightCode: '', rightType: 'empty' });
-                                           }
-                                       } else if (line.type === 'added') {
-                                           sbsRows.push({ leftNum: null, leftCode: '', leftType: 'empty', rightNum: rLine++, rightCode: line.value, rightType: 'added' });
-                                       }
-                                   }
-                               }
-
-                               return (
-                                   <div key={idx} className="bg-[#0d1117] border border-zinc-800 rounded-xl overflow-hidden shadow-lg">
-                                        <div className="bg-zinc-900 px-4 py-3 border-b border-zinc-800 flex justify-between items-center">
-                                            <span className="text-[13px] font-bold text-zinc-300 flex items-center gap-2"><File size={16} className="text-indigo-400"/> {art.filename}</span>
-                                            {isNew ? <span className="text-[10px] text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded font-medium border border-emerald-400/20">New File</span> :
-                                             isUnchanged ? <span className="text-[10px] text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded font-medium border border-zinc-700">Unchanged</span> :
-                                             <span className="text-[10px] text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded font-medium border border-amber-400/20">Modified</span>}
-                                        </div>
-
-                                        <div className="overflow-x-auto w-full bg-[#0d1117]">
-                                            {oldArt && !isUnchanged ? (
-                                                <div className="flex w-full min-w-max text-[12px] font-mono leading-relaxed divide-x divide-zinc-800">
-                                                    <div className="w-1/2 flex flex-col pb-4">
-                                                        <div className="sticky top-0 bg-[#2a1315]/90 text-red-400/80 text-[10px] uppercase tracking-widest px-4 py-2 border-b border-zinc-800/50 backdrop-blur-md z-10 font-sans">Main Branch (Old)</div>
-                                                        <div className="pt-2">
-                                                            {sbsRows.map((r, i) => (
-                                                                <div key={`l-${i}`} className={`flex px-2 hover:bg-zinc-800/30 ${r.leftType === 'removed' ? 'bg-red-900/30 text-red-300' : 'text-zinc-400'} ${r.leftType === 'empty' ? 'bg-[#0d1117] select-none' : ''}`}>
-                                                                    <span className="w-10 shrink-0 text-zinc-600 text-right pr-4 select-none opacity-50">{r.leftNum || ''}</span>
-                                                                    <span className="whitespace-pre">{r.leftCode}</span>
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                    <div className="w-1/2 flex flex-col pb-4">
-                                                        <div className="sticky top-0 bg-[#102a1b]/90 text-emerald-400/80 text-[10px] uppercase tracking-widest px-4 py-2 border-b border-zinc-800/50 backdrop-blur-md z-10 font-sans">This Timeline (New)</div>
-                                                        <div className="pt-2">
-                                                            {sbsRows.map((r, i) => (
-                                                                <div key={`r-${i}`} className={`flex px-2 hover:bg-zinc-800/30 ${r.rightType === 'added' ? 'bg-emerald-900/30 text-emerald-300' : 'text-zinc-300'} ${r.rightType === 'empty' ? 'bg-[#0d1117] select-none' : ''}`}>
-                                                                    <span className="w-10 shrink-0 text-zinc-600 text-right pr-4 select-none opacity-50">{r.rightNum || ''}</span>
-                                                                    <span className="whitespace-pre">{r.rightCode}</span>
-                                                                </div>
-                                                            ))}
-                                                        </div>
-                                                    </div>
-                                                </div>
-                                            ) : (
-                                                <div className={`p-4 font-mono text-[12px] text-zinc-300 whitespace-pre ${isNew ? "bg-[#102a1b]/10" : ""}`}>
-                                                    {art.code}
-                                                </div>
-                                            )}
-                                        </div>
-                                   </div>
-                               );
-                            })}
-                         </div>
-                      )}
-                   </div>
-               )}
-            </div>
-            <div className="p-5 border-t border-zinc-800 bg-zinc-900/50 flex justify-end gap-3">
-               <button onClick={() => setPrModalOpen(false)} className="px-5 py-2.5 text-sm text-zinc-400 hover:text-zinc-200 font-medium transition-colors">Cancel</button>
-               <button onClick={confirmMerge} disabled={loading || isDiffLoading} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-sm font-semibold shadow-lg shadow-emerald-900/20 transition-all flex items-center gap-2">
-                  {loading ? <Loader2 size={16} className="animate-spin"/> : <GitMerge size={16} />} Squash and Merge
-               </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* 🔥 NEW MODULAR PR MERGE MODAL */}
+      <MergeRequestModal 
+        isOpen={prModalOpen} 
+        onClose={() => setPrModalOpen(false)} 
+        onConfirm={confirmMerge} 
+        activeBranch={activeBranch} 
+        timelineArtifacts={timelineArtifacts} 
+        mainArtifacts={mainArtifacts} 
+        isDiffLoading={isDiffLoading} 
+        loading={loading} 
+      />
 
       <aside className="w-72 border-r border-zinc-800 flex flex-col bg-zinc-950/50 z-10">
         <div className="p-4 flex items-center justify-between mb-2">
@@ -734,7 +437,7 @@ export default function DialogTreeHome() {
           {branches.length === 0 ? (<div className="px-2 text-zinc-600 text-sm italic">Loading branches...</div>) : (
             <div className="relative space-y-1 pb-4">
                {branches.map((b) => {
-                 const depth = getBranchDepth(b);
+                 const depth = getBranchDepth(b, branches);
                  return (
                    <div key={b.id} className="relative flex items-center group" style={{ paddingLeft: `${depth * 16}px` }}>
                      {depth > 0 && <div className="absolute w-3 border-t border-zinc-700" style={{ left: `${(depth * 16) - 10}px` }}></div>}
@@ -772,12 +475,12 @@ export default function DialogTreeHome() {
                </button>
                {exportMenuOpen && (
                   <div className="absolute right-0 mt-2 w-48 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl py-1 z-50">
-                     <button onClick={exportMD} className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex flex-col">
+                     <button onClick={() => exportMD(activeBranch, messages, setExportMenuOpen)} className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex flex-col">
                         <span className="font-semibold">Markdown (.md)</span>
                         <span className="text-[10px] text-zinc-500">For GitHub or Obsidian</span>
                      </button>
                      <div className="h-px bg-zinc-800 my-1"></div>
-                     <button onClick={exportPDF} className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex flex-col">
+                     <button onClick={() => exportPDF(activeBranch, messages, setExportMenuOpen)} className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex flex-col">
                         <span className="font-semibold">Print / PDF</span>
                         <span className="text-[10px] text-zinc-500">Perfectly formatted document</span>
                      </button>
@@ -899,7 +602,6 @@ export default function DialogTreeHome() {
             </div>
         </aside>
       )}
-
     </div>
   );
 }
