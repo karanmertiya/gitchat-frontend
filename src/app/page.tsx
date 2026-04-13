@@ -1,12 +1,12 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, Github } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 
-// 🔥 NEW: Highlighters and Editor
+// 🔥 Highlighters and Editor
 import Editor from "@monaco-editor/react";
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -34,10 +34,13 @@ export default function DialogTreeHome() {
   const [workspace, setWorkspace] = useState<any>(null);
   const [activeBranch, setActiveBranch] = useState<any>(null);
   const [branches, setBranches] = useState<any[]>([]);
+  
+  // 🔥 NEW STATE: Workspaces List
+  const [recentWorkspaces, setRecentWorkspaces] = useState<{id: string, name: string}[]>([]);
 
-  // 🔥 NEW STATE: Resizable Editor and GitHub Modal
+  // Resizable Editor and GitHub Modal
   const [activeArtifact, setActiveArtifact] = useState<{code: string, lang: string, filename: string} | null>(null);
-  const [editorWidth, setEditorWidth] = useState(45); // Start at 45% width
+  const [editorWidth, setEditorWidth] = useState(45); 
   const [githubModalOpen, setGithubModalOpen] = useState(false);
   const [githubRepo, setGithubRepo] = useState("");
   const [githubCommitMsg, setGithubCommitMsg] = useState("");
@@ -58,14 +61,14 @@ export default function DialogTreeHome() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // 🔥 DRAG TO RESIZE LOGIC
+  // DRAG TO RESIZE LOGIC
   const startResizing = useCallback((mouseDownEvent: React.MouseEvent) => {
     const startWidth = editorWidth;
     const startPos = mouseDownEvent.clientX;
     const onMouseMove = (mouseMoveEvent: MouseEvent) => {
         const diff = startPos - mouseMoveEvent.clientX;
         const newWidth = startWidth + (diff / window.innerWidth) * 100;
-        setEditorWidth(Math.max(20, Math.min(80, newWidth))); // Clamp between 20% and 80%
+        setEditorWidth(Math.max(20, Math.min(80, newWidth))); 
     };
     const onMouseUp = () => {
         document.removeEventListener("mousemove", onMouseMove);
@@ -93,13 +96,28 @@ export default function DialogTreeHome() {
       try {
         const urlParams = new URLSearchParams(window.location.search);
         const joinId = urlParams.get('workspace');
-        const data = await api.init(session.user.id, "My First Workspace", joinId);
+        const customName = urlParams.get('newWsName');
+        const wsName = customName || "My First Workspace";
+
+        const data = await api.init(session.user.id, wsName, joinId);
         if (data.error) throw new Error(data.error);
         if (!data.workspace) throw new Error("Backend connection failed.");
+        
         setWorkspace(data.workspace);
         setActiveBranch(data.branch);
         const branchData = await api.getBranches(data.workspace.id);
         setBranches(branchData.branches);
+
+        // 🔥 Save to Local Storage for Sidebar
+        const recent = JSON.parse(localStorage.getItem('recent_workspaces') || '[]');
+        if (!recent.find((w: any) => w.id === data.workspace.id)) {
+            const updated = [{ id: data.workspace.id, name: data.workspace.name || wsName }, ...recent].slice(0, 10);
+            localStorage.setItem('recent_workspaces', JSON.stringify(updated));
+            setRecentWorkspaces(updated);
+        } else {
+            setRecentWorkspaces(recent);
+        }
+
         setIsInitializing(false);
       } catch (err: any) {
         alert(`Backend Error: ${err.message}\n\nLogging out to prevent frozen UI.`);
@@ -165,6 +183,13 @@ export default function DialogTreeHome() {
 
   const handleOAuth = async (provider: 'google' | 'github') => { await supabase.auth.signInWithOAuth({ provider }); };
   const handleLogout = async () => { await supabase.auth.signOut(); setWorkspace(null); setActiveBranch(null); setMessages([]); };
+
+  const createNewWorkspace = () => {
+      const name = prompt("Enter a name for your new workspace:");
+      if (name) {
+          window.location.href = `/?newWsName=${encodeURIComponent(name)}`;
+      }
+  };
 
   const handleSend = async () => {
     const finalPrompt = input.trim();
@@ -241,7 +266,7 @@ export default function DialogTreeHome() {
     } catch(e: any) { alert(`Merge failed: ${e.message}`); } finally { setLoading(false); }
   };
 
-  // 🔥 GITHUB PUSH ACTION
+  // GITHUB PUSH ACTION
   const executeGithubPush = async () => {
       if (!githubRepo || !githubCommitMsg || !activeArtifact) {
           alert("Please fill in repository and commit message!"); return;
@@ -301,7 +326,7 @@ export default function DialogTreeHome() {
     }
   };
 
-  // 🔥 VS CODE SYNTAX HIGHLIGHTING FOR CHAT
+  // VS CODE SYNTAX HIGHLIGHTING FOR CHAT
   const MarkdownComponents = {
     code({node, inline, className, children, ...props}: any) {
       const match = /language-(\w+)/.exec(className || '');
@@ -360,7 +385,7 @@ export default function DialogTreeHome() {
               </div>
               <div className="flex gap-3 mb-6">
                 <button onClick={() => handleOAuth('google')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Globe size={16} className="text-zinc-400" /> Google</button>
-                <button onClick={() => handleOAuth('github')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Github size={16} className="text-zinc-400" /> GitHub</button>
+                <button onClick={() => handleOAuth('github')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Code size={16} className="text-zinc-400" /> GitHub</button>
               </div>
               <div className="relative flex items-center py-4 mb-2">
                 <div className="flex-grow border-t border-zinc-800"></div><span className="flex-shrink-0 mx-4 text-zinc-500 text-xs uppercase tracking-widest">Or continue with email</span><div className="flex-grow border-t border-zinc-800"></div>
@@ -443,7 +468,7 @@ export default function DialogTreeHome() {
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
             <div className="flex justify-between items-center mb-4">
-                <h2 className="text-lg font-bold flex items-center gap-2"><Github size={20} className="text-white"/> Commit to GitHub</h2>
+                <h2 className="text-lg font-bold flex items-center gap-2"><GitCommit size={20} className="text-white"/> Commit to GitHub</h2>
                 <button onClick={() => setGithubModalOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={20}/></button>
             </div>
             <div className="space-y-4 mb-6">
@@ -463,14 +488,13 @@ export default function DialogTreeHome() {
             <div className="flex justify-end gap-3">
                 <button onClick={() => setGithubModalOpen(false)} className="px-4 py-2 text-sm text-zinc-400">Cancel</button>
                 <button onClick={executeGithubPush} disabled={githubPushing || !githubRepo || !githubCommitMsg} className="px-4 py-2 bg-white hover:bg-zinc-200 disabled:opacity-50 text-black rounded-lg text-sm font-semibold flex items-center gap-2">
-                    {githubPushing ? <Loader2 size={14} className="animate-spin"/> : <Github size={14}/>} Push to GitHub
+                    {githubPushing ? <Loader2 size={14} className="animate-spin"/> : <GitCommit size={14}/>} Push to GitHub
                 </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* MERGE REQUEST MODAL */}
       <MergeRequestModal 
         isOpen={prModalOpen} 
         onClose={() => setPrModalOpen(false)} 
@@ -499,7 +523,25 @@ export default function DialogTreeHome() {
             <button onClick={handleLogout} className="text-zinc-500 hover:text-red-400 transition-colors shrink-0 ml-2"><LogOut size={16} /></button>
           </div>
         </div>
+        
         <nav className="flex-1 px-3 overflow-y-auto">
+          
+          {/* 🔥 NEW WORKSPACES SECTION */}
+          <div className="mb-6">
+            <div className="text-xs font-semibold text-zinc-500 mb-2 px-2 uppercase tracking-wider flex justify-between items-center">
+                Workspaces
+                <button onClick={createNewWorkspace} className="hover:text-indigo-400 transition-colors" title="New Workspace"><Plus size={14}/></button>
+            </div>
+            <div className="space-y-1">
+                {recentWorkspaces.map(ws => (
+                    <a key={ws.id} href={`/?workspace=${ws.id}`} className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${workspace?.id === ws.id ? 'bg-indigo-900/30 text-indigo-400' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'}`}>
+                        <Folder size={14} className="shrink-0"/>
+                        <span className="truncate">{ws.name}</span>
+                    </a>
+                ))}
+            </div>
+          </div>
+
           <div className="text-xs font-semibold text-zinc-500 mb-3 px-2 uppercase tracking-wider">Timelines</div>
           {branches.length === 0 ? (<div className="px-2 text-zinc-600 text-sm italic">Loading branches...</div>) : (
             <div className="relative space-y-1 pb-4">
@@ -659,16 +701,13 @@ export default function DialogTreeHome() {
          </aside>
       )}
 
-      {/* 🔥 NEW RESIZABLE ARTIFACT EDITOR PANELS */}
+      {/* 🔥 RESIZABLE ARTIFACT EDITOR PANELS */}
       {activeArtifact && (
         <>
-            {/* The Invisible Drag Handle */}
             <div 
                 className="w-1 cursor-col-resize bg-zinc-800 hover:bg-indigo-500 hover:shadow-[0_0_10px_rgba(99,102,241,0.5)] transition-all z-40 active:bg-indigo-400 shrink-0" 
                 onMouseDown={startResizing} 
             />
-            
-            {/* The Monaco Editor Pane */}
             <aside style={{ width: `${editorWidth}%` }} className="min-w-[300px] border-l border-zinc-800 bg-[#1e1e1e] flex flex-col shadow-2xl z-30 relative shrink-0 transition-none">
                 <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900 shrink-0">
                     <div className="flex items-center gap-2 overflow-hidden pr-4">
@@ -677,16 +716,12 @@ export default function DialogTreeHome() {
                         <span className="ml-2 text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded uppercase tracking-wider shrink-0">{activeArtifact.lang}</span>
                     </div>
                     <div className="flex gap-2 shrink-0">
-                        {/* 🔥 NEW GITHUB BUTTON */}
-                        <button onClick={() => setGithubModalOpen(true)} className="flex items-center gap-1.5 text-xs bg-white hover:bg-zinc-200 text-black font-semibold px-3 py-1.5 rounded-lg transition-colors"><Github size={14}/> Commit</button>
-                        
+                        <button onClick={() => setGithubModalOpen(true)} className="flex items-center gap-1.5 text-xs bg-white hover:bg-zinc-200 text-black font-semibold px-3 py-1.5 rounded-lg transition-colors"><GitCommit size={14}/> Commit</button>
                         <button onClick={() => downloadCode(activeArtifact.code, activeArtifact.filename)} className="flex items-center gap-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors"><Download size={14}/> D/L</button>
                         <button onClick={() => navigator.clipboard.writeText(activeArtifact.code)} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors">Copy</button>
                         <button onClick={() => setActiveArtifact(null)} className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-zinc-800 transition-colors"><X size={18}/></button>
                     </div>
                 </div>
-                
-                {/* 🔥 THE MONACO EDITOR */}
                 <div className="flex-1 overflow-hidden pt-4">
                     <Editor
                         height="100%"
@@ -694,14 +729,7 @@ export default function DialogTreeHome() {
                         theme="vs-dark"
                         value={activeArtifact.code}
                         onChange={(val) => setActiveArtifact({ ...activeArtifact, code: val || '' })}
-                        options={{
-                            minimap: { enabled: false },
-                            fontSize: 13,
-                            wordWrap: 'on',
-                            padding: { top: 16 },
-                            scrollBeyondLastLine: false,
-                            smoothScrolling: true,
-                        }}
+                        options={{ minimap: { enabled: false }, fontSize: 13, wordWrap: 'on', padding: { top: 16 }, scrollBeyondLastLine: false, smoothScrolling: true }}
                     />
                 </div>
             </aside>
