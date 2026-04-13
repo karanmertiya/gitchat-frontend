@@ -213,10 +213,11 @@ export default function DialogTreeHome() {
           let match;
           regex.lastIndex = 0;
           while ((match = regex.exec(m.content)) !== null) {
-             let code = match[3] ? String(match[3]).trim() : '';
-             let filename = match[2] ? String(match[2]).trim() : '';
              let lang = match[1] ? String(match[1]).trim() : 'text';
+             let filename = match[2] ? String(match[2]).trim() : '';
+             let code = match[3] ? String(match[3]).trim() : '';
              
+             // 1. Try Regex for the first line comment
              if (!filename) {
                  const firstLine = code.split('\n')[0] || '';
                  const nameMatch = firstLine.match(/^(?:\/\/#|\/\/|#|--)\s*(?:filename\s*[:=]\s*)?(.+\.\w+)/i);
@@ -227,10 +228,25 @@ export default function DialogTreeHome() {
                      if (newlineIndex !== -1) {
                          code = code.substring(newlineIndex + 1).trim();
                      }
-                 } else {
-                     filename = `snippet_${idx}_${allArtifacts.length}.${lang === 'text' ? 'txt' : lang}`;
                  }
              }
+
+             // 2. CLAUDE-STYLE FALLBACK: Intelligently guess filename from code content
+             if (!filename) {
+                 const ext = lang === 'text' ? 'txt' : lang.replace('javascript', 'js').replace('typescript', 'ts').replace('python', 'py');
+                 
+                 const classMatch = code.match(/class\s+([A-Z][a-zA-Z0-9_]*)/);
+                 const funcMatch = code.match(/(?:function|const|let)\s+([a-zA-Z0-9_]+)/);
+                 
+                 if (classMatch && classMatch[1]) {
+                     filename = `${classMatch[1]}.${ext}`;
+                 } else if (funcMatch && funcMatch[1]) {
+                     filename = `${funcMatch[1]}.${ext}`;
+                 } else {
+                     filename = `artifact_${idx}_${allArtifacts.length + 1}.${ext}`;
+                 }
+             }
+
              allArtifacts.push({ lang, filename, code, msgIndex: idx });
           }
        }
