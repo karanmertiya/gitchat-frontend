@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, ChevronRight, AlertTriangle, CheckCircle2 } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, ChevronRight, AlertTriangle, CheckCircle2, RotateCcw } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -85,14 +85,17 @@ export default function DialogTreeHome() {
   const [selectedFiles, setSelectedFiles] = useState<{name: string, base64: string, type: string, ext: string}[]>([]);
   const [loading, setLoading] = useState(false);
   const [switching, setSwitching] = useState(false);
+  
   const [workspace, setWorkspace] = useState<any>(null);
   const [activeBranch, setActiveBranch] = useState<any>(null);
   const [branches, setBranches] = useState<any[]>([]);
   const [recentWorkspaces, setRecentWorkspaces] = useState<{id: string, name: string}[]>([]);
 
-  // 🔥 NEW: INLINE RENAMING STATE
   const [editingWsId, setEditingWsId] = useState<string | null>(null);
   const [editWsName, setEditWsName] = useState("");
+
+  // 🔥 NEW: UNDO TOAST STATE
+  const [undoToast, setUndoToast] = useState<{ id: string, name: string, timer?: NodeJS.Timeout } | null>(null);
 
   const [activeArtifact, setActiveArtifact] = useState<{code: string, lang: string, filename: string} | null>(null);
   const [editorTab, setEditorTab] = useState<'code' | 'preview'>('code');
@@ -109,7 +112,6 @@ export default function DialogTreeHome() {
   const [githubPushAll, setGithubPushAll] = useState(true); 
   const [githubPushing, setGithubPushing] = useState(false);
 
-  // 🔥 NEW: CI/CD DEPLOYMENT STATUS STATE
   const [deployStatus, setDeployStatus] = useState<'idle' | 'building' | 'success' | 'error'>('idle');
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -213,6 +215,7 @@ export default function DialogTreeHome() {
     };
   }, []);
 
+  // 🔥 REWRITTEN INITIALIZATION (No more respawning blank workspaces)
   useEffect(() => {
     if (!session?.user?.id) return;
     const setup = async () => {
@@ -220,31 +223,52 @@ export default function DialogTreeHome() {
         const urlParams = new URLSearchParams(window.location.search);
         const joinId = urlParams.get('workspace');
         const customName = urlParams.get('newWsName');
-        const wsName = customName || "Untitled Workspace"; // DEFAULT NAME
-
-        const data = await api.init(session.user.id, wsName, joinId);
-        if (data.error) throw new Error(data.error);
-        if (!data.workspace) throw new Error("Backend connection failed.");
-        
-        setWorkspace(data.workspace);
-        setActiveBranch(data.branch);
-        const branchData = await api.getBranches(data.workspace.id);
-        setBranches(branchData.branches);
-
         const recent = JSON.parse(localStorage.getItem('recent_workspaces') || '[]');
-        if (!recent.find((w: any) => w.id === data.workspace.id)) {
-            const updated = [{ id: data.workspace.id, name: data.workspace.name || wsName }, ...recent].slice(0, 10);
-            localStorage.setItem('recent_workspaces', JSON.stringify(updated));
-            setRecentWorkspaces(updated);
-        } else {
-            setRecentWorkspaces(recent);
+        setRecentWorkspaces(recent);
+
+        // Scenario 1: User explicitly asked for a New Workspace
+        if (customName) {
+            const data = await api.init(session.user.id, customName, null);
+            if (data.workspace) {
+                setWorkspace(data.workspace);
+                setActiveBranch(data.branch);
+                const branchData = await api.getBranches(data.workspace.id);
+                setBranches(branchData.branches);
+                
+                const updated = [{ id: data.workspace.id, name: data.workspace.name }, ...recent].slice(0, 10);
+                localStorage.setItem('recent_workspaces', JSON.stringify(updated));
+                setRecentWorkspaces(updated);
+                window.history.replaceState({}, '', `/?workspace=${data.workspace.id}`);
+            }
+        } 
+        // Scenario 2: Direct link to a Workspace
+        else if (joinId) {
+            const data = await api.init(session.user.id, "Joined Workspace", joinId);
+            if (data.workspace) {
+                setWorkspace(data.workspace);
+                setActiveBranch(data.branch);
+                const branchData = await api.getBranches(data.workspace.id);
+                setBranches(branchData.branches);
+                
+                if (!recent.find((w: any) => w.id === data.workspace.id)) {
+                    const updated = [{ id: data.workspace.id, name: data.workspace.name }, ...recent].slice(0, 10);
+                    localStorage.setItem('recent_workspaces', JSON.stringify(updated));
+                    setRecentWorkspaces(updated);
+                }
+            }
+        } 
+        // Scenario 3: Returning user, load their last workspace
+        else if (recent.length > 0) {
+            await switchWorkspace(recent[0].id);
+        }
+        // Scenario 4: Brand new user (or deleted all). Show Empty State!
+        else {
+            setWorkspace(null); 
         }
 
         setIsInitializing(false);
       } catch (err: any) {
-        alert(`Backend Error: ${err.message}\n\nLogging out to prevent frozen UI.`);
-        await supabase.auth.signOut();
-        setSession(null);
+        setWorkspace(null);
         setIsInitializing(false);
       }
     };
@@ -295,6 +319,25 @@ export default function DialogTreeHome() {
     return () => { supabase.removeChannel(channel); }
   }, [workspace, activeBranch]);
 
+  // 🔥 NEW: SPA NAVIGATION (NO PAGE RELOADS)
+  const switchWorkspace = async (id: string) => {
+      if (editingWsId === id || workspace?.id === id) return;
+      
+      const targetWs = recentWorkspaces.find(w => w.id === id);
+      if (targetWs) {
+          setWorkspace(targetWs);
+          window.history.pushState({}, '', `/?workspace=${id}`);
+          setSwitching(true);
+          try {
+              const branchData = await api.getBranches(id);
+              if (branchData.branches && branchData.branches.length > 0) {
+                  setBranches(branchData.branches);
+                  setActiveBranch(branchData.branches.find((b:any) => b.name === 'main') || branchData.branches[0]);
+              }
+          } catch(e) {}
+      }
+  };
+
   const handleEmailAuth = async (e: React.FormEvent) => {
     e.preventDefault();
     setAuthLoading(true); setAuthError(''); setVerifyMessage('');
@@ -319,11 +362,9 @@ export default function DialogTreeHome() {
   const handleLogout = async () => { await supabase.auth.signOut(); setWorkspace(null); setActiveBranch(null); setMessages([]); setRepoFiles([]); };
 
   const createNewWorkspace = () => {
-      // Instantly creates "Untitled Workspace"
       window.location.href = `/?newWsName=Untitled Workspace`;
   };
 
-  // 🔥 NEW: INLINE SAVE RENAME
   const saveWorkspaceRename = async (wsId: string) => {
       if (!editWsName.trim()) { setEditingWsId(null); return; }
       try {
@@ -337,18 +378,44 @@ export default function DialogTreeHome() {
       }
   };
 
-  const deleteWorkspace = async (wsId: string, e: React.MouseEvent) => {
+  // 🔥 NEW: OPTIMISTIC DELETE WITH UNDO TOAST
+  const triggerDeleteWorkspace = (wsId: string, wsName: string, e: React.MouseEvent) => {
       e.stopPropagation();
       e.preventDefault();
-      if (!window.confirm("Are you sure you want to permanently delete this workspace and all its branches/messages?")) return;
-      try {
-          const { error } = await supabase.from('workspaces').delete().eq('id', wsId);
-          if (error) throw error;
-          const updated = recentWorkspaces.filter(w => w.id !== wsId);
-          localStorage.setItem('recent_workspaces', JSON.stringify(updated));
-          setRecentWorkspaces(updated);
-          if (workspace?.id === wsId) window.location.href = '/';
-      } catch (err: any) { alert(`Failed to delete workspace: ${err.message}`); }
+      
+      // Optimistically remove from UI immediately
+      const updated = recentWorkspaces.filter(w => w.id !== wsId);
+      setRecentWorkspaces(updated);
+      localStorage.setItem('recent_workspaces', JSON.stringify(updated));
+      
+      if (workspace?.id === wsId) {
+          setWorkspace(null);
+          setActiveBranch(null);
+          window.history.pushState({}, '', `/`);
+      }
+
+      // Set the 5-second Doomsday Timer
+      const timer = setTimeout(async () => {
+          await supabase.from('workspaces').delete().eq('id', wsId);
+          setUndoToast(null);
+      }, 5000);
+
+      setUndoToast({ id: wsId, name: wsName, timer });
+  };
+
+  const handleUndoDelete = () => {
+      if (undoToast) {
+          clearTimeout(undoToast.timer);
+          // Restore to UI
+          const restored = [{ id: undoToast.id, name: undoToast.name }, ...recentWorkspaces];
+          setRecentWorkspaces(restored);
+          localStorage.setItem('recent_workspaces', JSON.stringify(restored));
+          
+          if (!workspace) {
+              switchWorkspace(undoToast.id);
+          }
+          setUndoToast(null);
+      }
   };
 
   const handleSend = async (overridePrompt?: string) => {
@@ -404,7 +471,6 @@ export default function DialogTreeHome() {
       handleSend(engineeredPrompt);
   };
 
-  // 🔥 NEW: DEPLOYMENT AUTO-HEALER TRIGGER
   const executeAutoHealer = () => {
       if (!activeBranch) return;
       const engineeredPrompt = `The recent deployment of this branch to Vercel/Render failed.\n\nPlease analyze the code in this branch for any compilation, build, or syntax errors, explain what caused the crash, and provide the fully corrected files so I can push a fix.`;
@@ -461,7 +527,6 @@ export default function DialogTreeHome() {
     } catch(e: any) { alert(`Merge failed: ${e.message}`); } finally { setLoading(false); }
   };
 
-  // 🔥 UPDATED GITHUB PUSH (Triggers CI/CD Polling)
   const executeGithubPush = async () => {
       if (!githubRepo || !githubCommitMsg || !activeArtifact || !githubToken) {
           alert("Please fill in all repository and token fields!"); return;
@@ -479,16 +544,14 @@ export default function DialogTreeHome() {
           setGithubModalOpen(false);
           setGithubCommitMsg("");
           
-          // 🔥 START POLLING CI/CD STATUS
           setDeployStatus('building');
           
-          // Poll GitHub API for Commit Statuses (Vercel posts here automatically)
           if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
           
           let attempts = 0;
           pollIntervalRef.current = setInterval(async () => {
               attempts++;
-              if (attempts > 30) { // Timeout after 2.5 minutes
+              if (attempts > 30) { 
                   clearInterval(pollIntervalRef.current as NodeJS.Timeout);
                   setDeployStatus('idle');
                   return;
@@ -715,6 +778,15 @@ export default function DialogTreeHome() {
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans relative overflow-hidden">
       
+      {/* 🔥 NEW: UNDO TOAST UI */}
+      {undoToast && (
+         <div className="fixed bottom-6 left-6 bg-zinc-800 border border-zinc-700 text-sm text-zinc-200 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-4 z-[100] animate-in slide-in-from-bottom-5 fade-in duration-300">
+            <span>Deleted <b>{undoToast.name}</b></span>
+            <div className="w-px h-4 bg-zinc-600"></div>
+            <button onClick={handleUndoDelete} className="text-emerald-400 font-bold hover:text-emerald-300 transition-colors flex items-center gap-1.5"><RotateCcw size={14}/> Undo</button>
+         </div>
+      )}
+
       <div className="absolute bottom-6 right-6 z-50">
          {isChitchatOpen ? (
             <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-80 shadow-2xl flex flex-col h-[450px] overflow-hidden">
@@ -909,7 +981,7 @@ export default function DialogTreeHome() {
                 {recentWorkspaces.map(ws => (
                     <div key={ws.id} className="relative flex items-center group">
                         
-                        {/* 🔥 INLINE EDITING LOGIC */}
+                        {/* 🔥 INLINE SPA RENAMING / SELECTION */}
                         {editingWsId === ws.id ? (
                             <div className="flex-1 flex items-center px-2 py-1.5 rounded-md bg-zinc-800 border border-zinc-700">
                                 <input 
@@ -923,15 +995,18 @@ export default function DialogTreeHome() {
                                 />
                             </div>
                         ) : (
-                            <a href={`/?workspace=${ws.id}`} onDoubleClick={(e) => { e.preventDefault(); setEditingWsId(ws.id); setEditWsName(ws.name); }} className={`flex-1 flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors ${workspace?.id === ws.id ? 'bg-indigo-900/30 text-indigo-400' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'}`}>
+                            <div 
+                                onClick={() => switchWorkspace(ws.id)} 
+                                onDoubleClick={(e) => { e.stopPropagation(); setEditingWsId(ws.id); setEditWsName(ws.name); }} 
+                                className={`flex-1 flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors cursor-pointer ${workspace?.id === ws.id ? 'bg-indigo-900/30 text-indigo-400' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'}`}
+                            >
                                 <div className="flex items-center gap-2 truncate pr-2">
                                     <Folder size={14} className="shrink-0"/>
-                                    <span className="truncate">{ws.name}</span>
+                                    <span className="truncate select-none">{ws.name}</span>
                                 </div>
-                            </a>
+                            </div>
                         )}
-
-                        <button onClick={(e) => deleteWorkspace(ws.id, e)} className="absolute right-2 p-1.5 bg-zinc-950/80 rounded-md text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity z-10" title="Delete Workspace">
+                        <button onClick={(e) => triggerDeleteWorkspace(ws.id, ws.name, e)} className="absolute right-2 p-1.5 bg-zinc-950/80 rounded-md text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity z-10" title="Delete Workspace">
                             <Trash size={14} />
                         </button>
                     </div>
@@ -939,8 +1014,11 @@ export default function DialogTreeHome() {
             </div>
           </div>
 
-          <div className="text-xs font-semibold text-zinc-500 mb-3 px-2 uppercase tracking-wider">Timelines</div>
-          {branches.length === 0 ? (<div className="px-2 text-zinc-600 text-sm italic">Loading branches...</div>) : (
+          {workspace && (
+              <div className="text-xs font-semibold text-zinc-500 mb-3 px-2 uppercase tracking-wider">Timelines</div>
+          )}
+          
+          {workspace && branches.length === 0 ? (<div className="px-2 text-zinc-600 text-sm italic">Loading branches...</div>) : (
             <div className="relative space-y-1 pb-4">
                {branches.map((b) => {
                  const depth = getBranchDepth(b, branches);
@@ -968,114 +1046,137 @@ export default function DialogTreeHome() {
       </aside>
 
       <main className="flex-1 flex flex-col relative min-w-0 bg-zinc-950">
-        <header className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-950/80 backdrop-blur-sm z-10 shrink-0">
-          <div className="flex items-center gap-3">
-             <span className="text-sm font-medium text-zinc-400">active:</span>
-             <code className="bg-zinc-900 px-3 py-1 rounded-md text-xs text-indigo-300 border border-zinc-700 flex items-center gap-2">{activeBranch?.is_ephemeral && <Zap size={12} className="text-amber-400"/>}{activeBranch?.name || 'loading...'}</code>
-          </div>
-          <div className="flex items-center gap-3">
-            
-            {/* 🔥 NEW: DEPLOYMENT STATUS UI */}
-            {deployStatus === 'building' && (
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-semibold animate-pulse">
-                    <Loader2 size={14} className="animate-spin" /> Building CI/CD...
+        
+        {/* 🔥 NEW: CLEAN EMPTY STATE */}
+        {!workspace ? (
+            <div className="flex-1 flex items-center justify-center p-8 bg-zinc-950">
+                <div className="max-w-md w-full text-center">
+                    <div className="bg-indigo-900/20 border border-indigo-500/30 p-4 rounded-2xl w-max mx-auto mb-6">
+                        <Folder size={32} className="text-indigo-400" />
+                    </div>
+                    <h2 className="text-2xl font-bold text-white mb-2">Welcome to DialogTree</h2>
+                    <p className="text-zinc-400 mb-8 leading-relaxed">Create a new workspace to start chatting with the AI, or import an existing GitHub repository to begin auto-healing your code.</p>
+                    <div className="flex gap-4 justify-center">
+                        <button onClick={createNewWorkspace} className="bg-indigo-600 hover:bg-indigo-500 text-white px-6 py-2.5 rounded-xl font-medium transition-colors flex items-center gap-2 shadow-lg shadow-indigo-900/20">
+                            <Plus size={18} /> New Workspace
+                        </button>
+                        <button onClick={() => setImportModalOpen(true)} className="bg-zinc-800 hover:bg-zinc-700 text-zinc-200 px-6 py-2.5 rounded-xl font-medium transition-colors flex items-center gap-2">
+                            <Import size={18} /> Import Repo
+                        </button>
+                    </div>
                 </div>
-            )}
-            {deployStatus === 'success' && (
-                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-xs font-semibold">
-                    <CheckCircle2 size={14} /> Deploy Success
-                </div>
-            )}
-            {deployStatus === 'error' && (
-                <button onClick={executeAutoHealer} className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-red-500 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs font-bold transition-all shadow-[0_0_15px_rgba(239,68,68,0.4)] animate-bounce">
-                    <AlertTriangle size={14} /> Deploy Failed - Auto Fix
-                </button>
-            )}
-
-            <div className="relative ml-2">
-               <button onClick={() => setExportMenuOpen(!exportMenuOpen)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-900 transition-all text-xs font-medium" title="Export this timeline">
-                  <Cloud size={14} /> Export <ChevronDown size={12} className={`transition-transform ${exportMenuOpen ? 'rotate-180' : ''}`}/>
-               </button>
-               {exportMenuOpen && (
-                  <div className="absolute right-0 mt-2 w-48 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl py-1 z-50">
-                     <button onClick={() => exportMD(activeBranch, messages, setExportMenuOpen)} className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex flex-col">
-                        <span className="font-semibold">Markdown (.md)</span>
-                        <span className="text-[10px] text-zinc-500">For GitHub or Obsidian</span>
-                     </button>
-                     <div className="h-px bg-zinc-800 my-1"></div>
-                     <button onClick={() => exportPDF(activeBranch, messages, setExportMenuOpen)} className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex flex-col">
-                        <span className="font-semibold">Print / PDF</span>
-                        <span className="text-[10px] text-zinc-500">Perfectly formatted document</span>
-                     </button>
+            </div>
+        ) : (
+            <>
+                <header className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-950/80 backdrop-blur-sm z-10 shrink-0">
+                  <div className="flex items-center gap-3">
+                     <span className="text-sm font-medium text-zinc-400">active:</span>
+                     <code className="bg-zinc-900 px-3 py-1 rounded-md text-xs text-indigo-300 border border-zinc-700 flex items-center gap-2">{activeBranch?.is_ephemeral && <Zap size={12} className="text-amber-400"/>}{activeBranch?.name || 'loading...'}</code>
                   </div>
-               )}
-            </div>
+                  <div className="flex items-center gap-3">
+                    
+                    {deployStatus === 'building' && (
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-semibold animate-pulse">
+                            <Loader2 size={14} className="animate-spin" /> Building CI/CD...
+                        </div>
+                    )}
+                    {deployStatus === 'success' && (
+                        <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-xs font-semibold">
+                            <CheckCircle2 size={14} /> Deploy Success
+                        </div>
+                    )}
+                    {deployStatus === 'error' && (
+                        <button onClick={executeAutoHealer} className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-red-500 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs font-bold transition-all shadow-[0_0_15px_rgba(239,68,68,0.4)] animate-bounce">
+                            <AlertTriangle size={14} /> Deploy Failed - Auto Fix
+                        </button>
+                    )}
 
-            <button onClick={() => setIsArtifactSidebarOpen(!isArtifactSidebarOpen)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-medium ${isArtifactSidebarOpen || allArtifacts.length > 0 ? 'border-indigo-600/50 bg-indigo-900/20 text-indigo-300 hover:bg-indigo-900/40' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
-               <Library size={14} /> Artifacts ({allArtifacts.length})
-            </button>
-
-            {activeBranch?.is_ephemeral && (<button onClick={makePermanent} className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-amber-900/30 border border-amber-700 hover:bg-amber-900/50 text-amber-300 text-xs font-medium transition-all"><Save size={14} /> Make Permanent</button>)}
-            
-            <button onClick={initiateMerge} className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-emerald-900/50 hover:bg-emerald-900/20 text-xs font-medium transition-all text-emerald-400 bg-zinc-900 shadow-sm"><GitMerge size={14} /> Merge Request</button>
-          </div>
-        </header>
-
-        <div className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth min-h-0 custom-scrollbar" onClick={() => setExportMenuOpen(false)}>
-          {switching ? (<div className="flex justify-center mt-20"><Loader2 size={24} className="animate-spin text-indigo-500" /></div>) : messages.length === 0 ? (<div className="text-center mt-20 text-zinc-500">Start typing...</div>) : (
-            
-            messages.filter(m => !(m.role === 'system' && m.content.includes('✅ **Imported'))).map((m, i) => {
-              const displayContent = m.content.replace(/---START_ATTACHMENT:(.*?)---[\s\S]*?---END_ATTACHMENT---/g, '\n\n📎 **Attached Document:** `$1`');
-              return (
-              <div key={i} className={`flex gap-4 ${m.role === 'user' ? 'justify-end' : m.role === 'system' ? 'justify-center' : 'justify-start'}`}>
-                <div className={`p-5 rounded-2xl max-w-[85%] shadow-sm relative group min-w-0 ${m.role === 'user' ? 'bg-zinc-800 text-zinc-100' : m.role === 'system' ? 'bg-zinc-900/80 border border-zinc-700 text-zinc-300 rounded-lg w-full text-center text-xs font-mono tracking-wide shadow-md' : 'bg-transparent text-zinc-200'}`}>
-                  {m.role === 'user' ? (
-                    <div className="whitespace-pre-wrap break-words text-[15px] leading-relaxed prose prose-invert">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>{displayContent}</ReactMarkdown>
+                    <div className="relative ml-2">
+                       <button onClick={() => setExportMenuOpen(!exportMenuOpen)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-900 transition-all text-xs font-medium" title="Export this timeline">
+                          <Cloud size={14} /> Export <ChevronDown size={12} className={`transition-transform ${exportMenuOpen ? 'rotate-180' : ''}`}/>
+                       </button>
+                       {exportMenuOpen && (
+                          <div className="absolute right-0 mt-2 w-48 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl py-1 z-50">
+                             <button onClick={() => exportMD(activeBranch, messages, setExportMenuOpen)} className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex flex-col">
+                                <span className="font-semibold">Markdown (.md)</span>
+                                <span className="text-[10px] text-zinc-500">For GitHub or Obsidian</span>
+                             </button>
+                             <div className="h-px bg-zinc-800 my-1"></div>
+                             <button onClick={() => exportPDF(activeBranch, messages, setExportMenuOpen)} className="w-full text-left px-4 py-2 text-sm text-zinc-300 hover:bg-zinc-800 hover:text-white transition-colors flex flex-col">
+                                <span className="font-semibold">Print / PDF</span>
+                                <span className="text-[10px] text-zinc-500">Perfectly formatted document</span>
+                             </button>
+                          </div>
+                       )}
                     </div>
-                  ) : (
-                    <div className="prose prose-invert max-w-none text-[15px] leading-relaxed break-words overflow-hidden">
-                      <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>{displayContent}</ReactMarkdown>
-                    </div>
+
+                    <button onClick={() => setIsArtifactSidebarOpen(!isArtifactSidebarOpen)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-medium ${isArtifactSidebarOpen || allArtifacts.length > 0 ? 'border-indigo-600/50 bg-indigo-900/20 text-indigo-300 hover:bg-indigo-900/40' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
+                       <Library size={14} /> Artifacts ({allArtifacts.length})
+                    </button>
+
+                    {activeBranch?.is_ephemeral && (<button onClick={makePermanent} className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-amber-900/30 border border-amber-700 hover:bg-amber-900/50 text-amber-300 text-xs font-medium transition-all"><Save size={14} /> Make Permanent</button>)}
+                    
+                    <button onClick={initiateMerge} className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-emerald-900/50 hover:bg-emerald-900/20 text-xs font-medium transition-all text-emerald-400 bg-zinc-900 shadow-sm"><GitMerge size={14} /> Merge Request</button>
+                  </div>
+                </header>
+
+                <div className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth min-h-0 custom-scrollbar" onClick={() => setExportMenuOpen(false)}>
+                  {switching ? (<div className="flex justify-center mt-20"><Loader2 size={24} className="animate-spin text-indigo-500" /></div>) : messages.length === 0 ? (<div className="text-center mt-20 text-zinc-500">Start typing...</div>) : (
+                    
+                    messages.filter(m => !(m.role === 'system' && m.content.includes('✅ **Imported'))).map((m, i) => {
+                      const displayContent = m.content.replace(/---START_ATTACHMENT:(.*?)---[\s\S]*?---END_ATTACHMENT---/g, '\n\n📎 **Attached Document:** `$1`');
+                      return (
+                      <div key={i} className={`flex gap-4 ${m.role === 'user' ? 'justify-end' : m.role === 'system' ? 'justify-center' : 'justify-start'}`}>
+                        <div className={`p-5 rounded-2xl max-w-[85%] shadow-sm relative group min-w-0 ${m.role === 'user' ? 'bg-zinc-800 text-zinc-100' : m.role === 'system' ? 'bg-zinc-900/80 border border-zinc-700 text-zinc-300 rounded-lg w-full text-center text-xs font-mono tracking-wide shadow-md' : 'bg-transparent text-zinc-200'}`}>
+                          {m.role === 'user' ? (
+                            <div className="whitespace-pre-wrap break-words text-[15px] leading-relaxed prose prose-invert">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>{displayContent}</ReactMarkdown>
+                            </div>
+                          ) : (
+                            <div className="prose prose-invert max-w-none text-[15px] leading-relaxed break-words overflow-hidden">
+                              <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>{displayContent}</ReactMarkdown>
+                            </div>
+                          )}
+                          {m.id && m.id !== 'temp' && m.role !== 'system' && (
+                            <button onClick={() => setForkModal({ isOpen: true, messageId: m.id, name: "", isEphemeral: true })} className={`absolute -bottom-4 ${m.role === 'user' ? '-left-2' : '-right-2'} p-1.5 bg-zinc-800 border border-zinc-700 text-zinc-400 rounded-full opacity-0 group-hover:opacity-100 hover:text-indigo-400 hover:border-indigo-500 transition-all shadow-lg z-10`} title="Branch timeline from this message"><GitFork size={14} /></button>
+                          )}
+                        </div>
+                      </div>
+                    )})
                   )}
-                  {m.id && m.id !== 'temp' && m.role !== 'system' && (
-                    <button onClick={() => setForkModal({ isOpen: true, messageId: m.id, name: "", isEphemeral: true })} className={`absolute -bottom-4 ${m.role === 'user' ? '-left-2' : '-right-2'} p-1.5 bg-zinc-800 border border-zinc-700 text-zinc-400 rounded-full opacity-0 group-hover:opacity-100 hover:text-indigo-400 hover:border-indigo-500 transition-all shadow-lg z-10`} title="Branch timeline from this message"><GitFork size={14} /></button>
-                  )}
+                  {loading && (<div className="flex gap-3 items-center text-zinc-400 text-sm bg-zinc-900/50 w-max px-4 py-2 rounded-full border border-zinc-800/50"><Loader2 size={16} className="animate-spin text-indigo-500" /> <span>AI is thinking...</span></div>)}
                 </div>
-              </div>
-            )})
-          )}
-          {loading && (<div className="flex gap-3 items-center text-zinc-400 text-sm bg-zinc-900/50 w-max px-4 py-2 rounded-full border border-zinc-800/50"><Loader2 size={16} className="animate-spin text-indigo-500" /> <span>AI is thinking...</span></div>)}
-        </div>
 
-        <div className="p-6 pt-2 shrink-0" onClick={() => setExportMenuOpen(false)}>
-          <div className="max-w-4xl mx-auto relative group flex items-end gap-3 bg-zinc-900 border border-zinc-800 rounded-3xl p-2 shadow-xl focus-within:border-indigo-500/50 focus-within:ring-1 focus-within:ring-indigo-500/50 transition-all">
-            <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.md,.js,.ts,.py,.json,.html,.css,.csv,.pdf,image/*" />
-            <button onClick={() => fileInputRef.current?.click()} className="p-3.5 bg-zinc-800/50 rounded-2xl text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800 transition-all mb-1"><Paperclip size={20} /></button>
-            <div className="relative flex-1 flex flex-col justify-end min-w-0">
-              {selectedFiles.length > 0 && (
-                 <div className="flex flex-wrap gap-2 mb-3">
-                    {selectedFiles.map((file, idx) => (
-                      file.type.startsWith('image/') ? (
-                        <div key={idx} className="relative w-16 h-16 rounded-lg overflow-hidden border border-zinc-700 shadow-md group">
-                           <img src={file.base64} alt="preview" className="w-full h-full object-cover" />
-                           <button onClick={() => setSelectedFiles(prev => prev.filter((_, i) => i !== idx))} className="absolute top-1 right-1 bg-black/60 text-zinc-300 hover:text-red-400 p-0.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={12}/></button>
-                        </div>
-                      ) : (
-                        <div key={idx} className="bg-zinc-800 rounded-lg py-1.5 px-3 flex items-center gap-2 border border-zinc-700 shadow-md">
-                          <File size={14} className="text-indigo-400 shrink-0" />
-                          <span className="text-xs text-zinc-300 max-w-[120px] truncate">{file.name}</span>
-                          <button onClick={() => setSelectedFiles(prev => prev.filter((_, i) => i !== idx))} className="text-zinc-500 hover:text-red-400"><X size={14}/></button>
-                        </div>
-                      )
-                    ))}
-                 </div>
-              )}
-              <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }} disabled={switching || !activeBranch} placeholder={`Message #${activeBranch?.name || '...'} (Tip: Use @filename to fetch context)`} className="w-full bg-transparent border-none py-3 px-2 focus:outline-none focus:ring-0 text-[15px] resize-none overflow-y-auto" style={{ minHeight: '50px', maxHeight: '200px', height: input ? 'auto' : '50px' }} />
-            </div>
-            <button onClick={() => handleSend()} disabled={loading || switching || (!input.trim() && selectedFiles.length === 0)} className="p-3.5 mb-1 bg-indigo-600 rounded-2xl hover:bg-indigo-500 disabled:opacity-50 disabled:bg-zinc-800 transition-all active:scale-95 shrink-0"><Send size={18} className={(input.trim() || selectedFiles.length > 0) ? "text-white" : "text-zinc-400"} /></button>
-          </div>
-        </div>
+                <div className="p-6 pt-2 shrink-0" onClick={() => setExportMenuOpen(false)}>
+                  <div className="max-w-4xl mx-auto relative group flex items-end gap-3 bg-zinc-900 border border-zinc-800 rounded-3xl p-2 shadow-xl focus-within:border-indigo-500/50 focus-within:ring-1 focus-within:ring-indigo-500/50 transition-all">
+                    <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.md,.js,.ts,.py,.json,.html,.css,.csv,.pdf,image/*" />
+                    <button onClick={() => fileInputRef.current?.click()} className="p-3.5 bg-zinc-800/50 rounded-2xl text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800 transition-all mb-1"><Paperclip size={20} /></button>
+                    <div className="relative flex-1 flex flex-col justify-end min-w-0">
+                      {selectedFiles.length > 0 && (
+                         <div className="flex flex-wrap gap-2 mb-3">
+                            {selectedFiles.map((file, idx) => (
+                              file.type.startsWith('image/') ? (
+                                <div key={idx} className="relative w-16 h-16 rounded-lg overflow-hidden border border-zinc-700 shadow-md group">
+                                   <img src={file.base64} alt="preview" className="w-full h-full object-cover" />
+                                   <button onClick={() => setSelectedFiles(prev => prev.filter((_, i) => i !== idx))} className="absolute top-1 right-1 bg-black/60 text-zinc-300 hover:text-red-400 p-0.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={12}/></button>
+                                </div>
+                              ) : (
+                                <div key={idx} className="bg-zinc-800 rounded-lg py-1.5 px-3 flex items-center gap-2 border border-zinc-700 shadow-md">
+                                  <File size={14} className="text-indigo-400 shrink-0" />
+                                  <span className="text-xs text-zinc-300 max-w-[120px] truncate">{file.name}</span>
+                                  <button onClick={() => setSelectedFiles(prev => prev.filter((_, i) => i !== idx))} className="text-zinc-500 hover:text-red-400"><X size={14}/></button>
+                                </div>
+                              )
+                            ))}
+                         </div>
+                      )}
+                      <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }} disabled={switching || !activeBranch} placeholder={`Message #${activeBranch?.name || '...'} (Tip: Use @filename to fetch context)`} className="w-full bg-transparent border-none py-3 px-2 focus:outline-none focus:ring-0 text-[15px] resize-none overflow-y-auto custom-scrollbar" style={{ minHeight: '50px', maxHeight: '200px', height: input ? 'auto' : '50px' }} />
+                    </div>
+                    <button onClick={() => handleSend()} disabled={loading || switching || (!input.trim() && selectedFiles.length === 0)} className="p-3.5 mb-1 bg-indigo-600 rounded-2xl hover:bg-indigo-500 disabled:opacity-50 disabled:bg-zinc-800 transition-all active:scale-95 shrink-0"><Send size={18} className={(input.trim() || selectedFiles.length > 0) ? "text-white" : "text-zinc-400"} /></button>
+                  </div>
+                </div>
+            </>
+        )}
       </main>
 
       {isArtifactSidebarOpen && (
