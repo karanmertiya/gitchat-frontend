@@ -20,5 +20,5 @@ export const api = {
     
   // 🔥 NEW: Pull from GitHub
   pullFromGithub: (repoName: string, patToken?: string) => 
-    fetch(`${API_BASE}/github/pull`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ repo: repoName, token: patToken }) }).then(res => res.json())
+    fetch(`/api/github/pull`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ repo: repoName, token: patToken }) }).then(res => res.json())
 };
