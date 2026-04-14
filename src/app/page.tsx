@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, ChevronRight, AlertTriangle, CheckCircle2, RotateCcw } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, ChevronRight, AlertTriangle, CheckCircle2, RotateCcw, Settings } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -13,7 +13,6 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { getBranchDepth, downloadCode, downloadAllArtifacts, extractAllArtifacts, exportMD, exportPDF } from '@/lib/dialogUtils';
 import MergeRequestModal from '@/components/MergeRequestModal';
 
-// FOLDER TREE UI
 const FolderTreeItem = ({ node, path, selectedFiles, toggleFile, toggleFolder }: any) => {
     const [isOpen, setIsOpen] = useState(true);
     
@@ -93,8 +92,6 @@ export default function DialogTreeHome() {
 
   const [editingWsId, setEditingWsId] = useState<string | null>(null);
   const [editWsName, setEditWsName] = useState("");
-
-  // 🔥 NEW: UNDO TOAST STATE
   const [undoToast, setUndoToast] = useState<{ id: string, name: string, timer?: NodeJS.Timeout } | null>(null);
 
   const [activeArtifact, setActiveArtifact] = useState<{code: string, lang: string, filename: string} | null>(null);
@@ -112,6 +109,10 @@ export default function DialogTreeHome() {
   const [githubPushAll, setGithubPushAll] = useState(true); 
   const [githubPushing, setGithubPushing] = useState(false);
 
+  // 🔥 NEW: VERCEL PAT STATE FOR AUTO-HEALER
+  const [deploySettingsOpen, setDeploySettingsOpen] = useState(false);
+  const [vercelToken, setVercelToken] = useState("");
+  const [vercelProjectId, setVercelProjectId] = useState("");
   const [deployStatus, setDeployStatus] = useState<'idle' | 'building' | 'success' | 'error'>('idle');
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
@@ -145,8 +146,62 @@ export default function DialogTreeHome() {
       else allArtifacts.push(art); 
   });
 
+  // 🔥 UPDATED: PYODIDE WEBASSEMBLY ENGINE FOR PYTHON!
   const getPreviewHtml = () => {
-      let html = allArtifacts.find(a => a.lang === 'html' || a.filename.endsWith('.html'))?.code || '<div style="color:black; font-family:sans-serif; text-align:center; margin-top: 50px;"><h2>No HTML file found</h2><p>Ask the AI to generate an index.html file to see the preview!</p></div>';
+      if (!activeArtifact) return '';
+
+      // PYTHON PREVIEW (WebAssembly)
+      if (activeArtifact.lang === 'python' || activeArtifact.filename.endsWith('.py')) {
+          return `
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"></script>
+                <style>
+                    body { background: #0d1117; color: #c9d1d9; font-family: monospace; padding: 1.5rem; margin: 0; line-height: 1.6; }
+                    .header { color: #58a6ff; font-weight: bold; margin-bottom: 1rem; border-bottom: 1px solid #30363d; padding-bottom: 0.5rem; }
+                    #output { white-space: pre-wrap; font-size: 14px; }
+                    .error { color: #ff7b72; }
+                    .loader { display: inline-block; width: 12px; height: 12px; border: 2px solid #58a6ff; border-radius: 50%; border-top-color: transparent; animation: spin 1s linear infinite; margin-right: 8px; vertical-align: middle; }
+                    @keyframes spin { 100% { transform: rotate(360deg); } }
+                </style>
+            </head>
+            <body>
+                <div class="header" id="status"><span class="loader"></span>Initializing Python WebAssembly Engine...</div>
+                <div id="output"></div>
+                <script>
+                    async function main() {
+                        const status = document.getElementById("status");
+                        const output = document.getElementById("output");
+                        try {
+                            let pyodide = await loadPyodide();
+                            status.innerHTML = "✅ Execution Output";
+                            
+                            pyodide.runPython(\`
+                                import sys
+                                import io
+                                sys.stdout = io.StringIO()
+                            \`);
+
+                            const pythonCode = \`${activeArtifact.code.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`;
+                            await pyodide.runPythonAsync(pythonCode);
+                            
+                            let stdout = pyodide.runPython("sys.stdout.getvalue()");
+                            output.innerText = stdout || "(No print output)";
+                        } catch (err) {
+                            status.innerHTML = "❌ Execution Error";
+                            output.innerHTML = "<span class='error'>" + err + "</span>";
+                        }
+                    }
+                    main();
+                </script>
+            </body>
+            </html>
+          `;
+      }
+
+      // STANDARD HTML/JS/CSS PREVIEW
+      let html = allArtifacts.find(a => a.lang === 'html' || a.filename.endsWith('.html'))?.code || '<div style="color:black; font-family:sans-serif; padding: 20px;"><h2>HTML required</h2><p>Ask the AI to generate HTML to view the live webpage.</p></div>';
       const css = allArtifacts.find(a => a.lang === 'css' || a.filename.endsWith('.css'))?.code || '';
       const js = allArtifacts.find(a => a.lang.includes('js') || a.filename.endsWith('.js'))?.code || '';
 
@@ -208,6 +263,8 @@ export default function DialogTreeHome() {
 
     setGithubRepo(localStorage.getItem('dialogtree_github_repo') || "");
     setGithubToken(localStorage.getItem('dialogtree_github_token') || "");
+    setVercelToken(localStorage.getItem('dialogtree_vercel_token') || "");
+    setVercelProjectId(localStorage.getItem('dialogtree_vercel_project') || "");
 
     return () => {
         subscription.unsubscribe();
@@ -215,7 +272,6 @@ export default function DialogTreeHome() {
     };
   }, []);
 
-  // 🔥 REWRITTEN INITIALIZATION (No more respawning blank workspaces)
   useEffect(() => {
     if (!session?.user?.id) return;
     const setup = async () => {
@@ -226,7 +282,6 @@ export default function DialogTreeHome() {
         const recent = JSON.parse(localStorage.getItem('recent_workspaces') || '[]');
         setRecentWorkspaces(recent);
 
-        // Scenario 1: User explicitly asked for a New Workspace
         if (customName) {
             const data = await api.init(session.user.id, customName, null);
             if (data.workspace) {
@@ -241,7 +296,6 @@ export default function DialogTreeHome() {
                 window.history.replaceState({}, '', `/?workspace=${data.workspace.id}`);
             }
         } 
-        // Scenario 2: Direct link to a Workspace
         else if (joinId) {
             const data = await api.init(session.user.id, "Joined Workspace", joinId);
             if (data.workspace) {
@@ -257,15 +311,12 @@ export default function DialogTreeHome() {
                 }
             }
         } 
-        // Scenario 3: Returning user, load their last workspace
         else if (recent.length > 0) {
             await switchWorkspace(recent[0].id);
         }
-        // Scenario 4: Brand new user (or deleted all). Show Empty State!
         else {
             setWorkspace(null); 
         }
-
         setIsInitializing(false);
       } catch (err: any) {
         setWorkspace(null);
@@ -319,7 +370,6 @@ export default function DialogTreeHome() {
     return () => { supabase.removeChannel(channel); }
   }, [workspace, activeBranch]);
 
-  // 🔥 NEW: SPA NAVIGATION (NO PAGE RELOADS)
   const switchWorkspace = async (id: string) => {
       if (editingWsId === id || workspace?.id === id) return;
       
@@ -361,8 +411,10 @@ export default function DialogTreeHome() {
   const handleOAuth = async (provider: 'google' | 'github') => { await supabase.auth.signInWithOAuth({ provider }); };
   const handleLogout = async () => { await supabase.auth.signOut(); setWorkspace(null); setActiveBranch(null); setMessages([]); setRepoFiles([]); };
 
+  // 🔥 FIX: Prevent strict mode duplication with random hash
   const createNewWorkspace = () => {
-      window.location.href = `/?newWsName=Untitled Workspace`;
+      const hash = Math.floor(1000 + Math.random() * 9000);
+      window.location.href = `/?newWsName=Untitled Workspace ${hash}`;
   };
 
   const saveWorkspaceRename = async (wsId: string) => {
@@ -378,12 +430,10 @@ export default function DialogTreeHome() {
       }
   };
 
-  // 🔥 NEW: OPTIMISTIC DELETE WITH UNDO TOAST
   const triggerDeleteWorkspace = (wsId: string, wsName: string, e: React.MouseEvent) => {
       e.stopPropagation();
       e.preventDefault();
       
-      // Optimistically remove from UI immediately
       const updated = recentWorkspaces.filter(w => w.id !== wsId);
       setRecentWorkspaces(updated);
       localStorage.setItem('recent_workspaces', JSON.stringify(updated));
@@ -394,7 +444,6 @@ export default function DialogTreeHome() {
           window.history.pushState({}, '', `/`);
       }
 
-      // Set the 5-second Doomsday Timer
       const timer = setTimeout(async () => {
           await supabase.from('workspaces').delete().eq('id', wsId);
           setUndoToast(null);
@@ -406,14 +455,11 @@ export default function DialogTreeHome() {
   const handleUndoDelete = () => {
       if (undoToast) {
           clearTimeout(undoToast.timer);
-          // Restore to UI
           const restored = [{ id: undoToast.id, name: undoToast.name }, ...recentWorkspaces];
           setRecentWorkspaces(restored);
           localStorage.setItem('recent_workspaces', JSON.stringify(restored));
           
-          if (!workspace) {
-              switchWorkspace(undoToast.id);
-          }
+          if (!workspace) switchWorkspace(undoToast.id);
           setUndoToast(null);
       }
   };
@@ -471,10 +517,43 @@ export default function DialogTreeHome() {
       handleSend(engineeredPrompt);
   };
 
-  const executeAutoHealer = () => {
+  // 🔥 NEW: REAL VERCEL LOG FETCHER FOR AUTO-HEALER
+  const executeAutoHealer = async () => {
       if (!activeBranch) return;
-      const engineeredPrompt = `The recent deployment of this branch to Vercel/Render failed.\n\nPlease analyze the code in this branch for any compilation, build, or syntax errors, explain what caused the crash, and provide the fully corrected files so I can push a fix.`;
       setDeployStatus('idle');
+
+      let engineeredPrompt = `The recent deployment of this branch failed.\n\nPlease analyze the code in this branch for any compilation, build, or syntax errors, explain what caused the crash, and provide the fully corrected files.`;
+
+      // If they provided a Vercel PAT, fetch the actual error logs!
+      if (vercelToken && vercelProjectId) {
+          try {
+              // 1. Get latest failed deployment for this project
+              const depRes = await fetch(`https://api.vercel.com/v6/deployments?projectId=${vercelProjectId}&state=ERROR&limit=1`, {
+                  headers: { 'Authorization': `Bearer ${vercelToken}` }
+              });
+              const depData = await depRes.json();
+              
+              if (depData.deployments && depData.deployments.length > 0) {
+                  const deploymentId = depData.deployments[0].uid;
+                  
+                  // 2. Fetch the build logs for that deployment
+                  const eventRes = await fetch(`https://api.vercel.com/v2/deployments/${deploymentId}/events`, {
+                      headers: { 'Authorization': `Bearer ${vercelToken}` }
+                  });
+                  const eventData = await eventRes.json();
+                  
+                  // Extract actual error strings
+                  const errorLogs = eventData.filter((log: any) => log.type === 'error' || log.text.includes('Error')).map((l:any) => l.text).join('\n');
+                  
+                  if (errorLogs) {
+                      engineeredPrompt = `My Vercel deployment just failed. Here are the exact build logs:\n\n\`\`\`\n${errorLogs}\n\`\`\`\n\nFind the file causing this error, fix it, and give me the complete corrected code.`;
+                  }
+              }
+          } catch (err) {
+              console.log("Could not fetch Vercel logs, falling back to blind analysis.", err);
+          }
+      }
+
       handleSend(engineeredPrompt);
   };
 
@@ -778,7 +857,6 @@ export default function DialogTreeHome() {
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans relative overflow-hidden">
       
-      {/* 🔥 NEW: UNDO TOAST UI */}
       {undoToast && (
          <div className="fixed bottom-6 left-6 bg-zinc-800 border border-zinc-700 text-sm text-zinc-200 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-4 z-[100] animate-in slide-in-from-bottom-5 fade-in duration-300">
             <span>Deleted <b>{undoToast.name}</b></span>
@@ -832,6 +910,32 @@ export default function DialogTreeHome() {
               <label htmlFor="ephemeral" className="text-sm text-zinc-300 flex items-center gap-2 cursor-pointer"><Zap size={14} className={forkModal.isEphemeral ? "text-amber-400" : "text-zinc-600"}/> Temporary Workspace</label>
             </div>
             <div className="flex justify-end gap-3"><button onClick={() => setForkModal(prev => ({ ...prev, isOpen: false }))} className="px-4 py-2 text-sm text-zinc-400">Cancel</button><button onClick={submitFork} disabled={!forkModal.name.trim()} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">Create Branch</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* 🔥 DEPLOY SETTINGS MODAL */}
+      {deploySettingsOpen && (
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-bold flex items-center gap-2"><Settings size={20} className="text-zinc-400"/> CI/CD Deploy Settings</h2>
+                <button onClick={() => setDeploySettingsOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={20}/></button>
+            </div>
+            <div className="space-y-4 mb-6 text-sm text-zinc-300">
+                <p>Provide your Vercel API credentials to allow the Auto-Healer to read your raw build logs when a deployment fails.</p>
+                <div>
+                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Vercel Personal Access Token</label>
+                    <input type="password" value={vercelToken} onChange={e => { setVercelToken(e.target.value); localStorage.setItem('dialogtree_vercel_token', e.target.value); }} placeholder="e.g. y0ur_v3rc3l_t0k3n..." className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
+                </div>
+                <div>
+                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Vercel Project ID (Optional)</label>
+                    <input type="text" value={vercelProjectId} onChange={e => { setVercelProjectId(e.target.value); localStorage.setItem('dialogtree_vercel_project', e.target.value); }} placeholder="e.g. prj_xyz123..." className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
+                </div>
+            </div>
+            <div className="flex justify-end gap-3">
+                <button onClick={() => setDeploySettingsOpen(false)} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-semibold">Save Settings</button>
+            </div>
           </div>
         </div>
       )}
@@ -981,7 +1085,6 @@ export default function DialogTreeHome() {
                 {recentWorkspaces.map(ws => (
                     <div key={ws.id} className="relative flex items-center group">
                         
-                        {/* 🔥 INLINE SPA RENAMING / SELECTION */}
                         {editingWsId === ws.id ? (
                             <div className="flex-1 flex items-center px-2 py-1.5 rounded-md bg-zinc-800 border border-zinc-700">
                                 <input 
@@ -1047,7 +1150,6 @@ export default function DialogTreeHome() {
 
       <main className="flex-1 flex flex-col relative min-w-0 bg-zinc-950">
         
-        {/* 🔥 NEW: CLEAN EMPTY STATE */}
         {!workspace ? (
             <div className="flex-1 flex items-center justify-center p-8 bg-zinc-950">
                 <div className="max-w-md w-full text-center">
@@ -1086,9 +1188,15 @@ export default function DialogTreeHome() {
                         </div>
                     )}
                     {deployStatus === 'error' && (
-                        <button onClick={executeAutoHealer} className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-red-500 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs font-bold transition-all shadow-[0_0_15px_rgba(239,68,68,0.4)] animate-bounce">
-                            <AlertTriangle size={14} /> Deploy Failed - Auto Fix
-                        </button>
+                        <div className="flex items-center gap-2">
+                            <button onClick={executeAutoHealer} className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-red-500 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs font-bold transition-all shadow-[0_0_15px_rgba(239,68,68,0.4)] animate-bounce">
+                                <AlertTriangle size={14} /> Deploy Failed - Auto Fix
+                            </button>
+                            <button onClick={() => setDeploySettingsOpen(true)} className="p-1.5 text-zinc-500 hover:text-zinc-300 transition-colors" title="Settings"><Settings size={14}/></button>
+                        </div>
+                    )}
+                    {deployStatus === 'idle' && (
+                        <button onClick={() => setDeploySettingsOpen(true)} className="p-1.5 text-zinc-500 hover:text-zinc-300 transition-colors" title="Deploy Settings"><Settings size={14}/></button>
                     )}
 
                     <div className="relative ml-2">
@@ -1277,10 +1385,10 @@ export default function DialogTreeHome() {
                         )}
                     </div>
                     
-                    <div className={`absolute inset-0 bg-white transition-opacity ${editorTab === 'preview' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
+                    <div className={`absolute inset-0 bg-[#0d1117] transition-opacity ${editorTab === 'preview' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
                         <iframe 
                             title="live-preview"
-                            className="w-full h-full border-none bg-white"
+                            className="w-full h-full border-none"
                             srcDoc={getPreviewHtml()}
                             sandbox="allow-scripts allow-modals"
                         />
