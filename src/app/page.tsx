@@ -1,10 +1,13 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, ChevronRight, AlertTriangle, CheckCircle2, RotateCcw, Settings, Cpu, Server, Database, Activity, Shield, BrainCircuit, Network, Bot } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User as UserIcon, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, ChevronRight, AlertTriangle, CheckCircle2, RotateCcw, Settings, Cpu, Server, Database, Activity, Shield } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import toast, { Toaster } from 'react-hot-toast'; // 🔥 NEW: Pro Notifications
+
 import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
+import { User, Workspace, Branch, Message, Artifact } from '@/types'; // 🔥 NEW: Strict Typing
 
 import Editor, { useMonaco } from "@monaco-editor/react";
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -18,7 +21,7 @@ import MultiplayerCursors from '@/components/MultiplayerCursors';
 
 export default function DialogTreeHome() {
   const monaco = useMonaco();
-  const [session, setSession] = useState<any>(null);
+  const [session, setSession] = useState<{ user: User } | null>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   
   const [authName, setAuthName] = useState('');
@@ -26,9 +29,8 @@ export default function DialogTreeHome() {
   const [authPassword, setAuthPassword] = useState('');
   const [isSignUp, setIsSignUp] = useState(false);
   const [authLoading, setAuthLoading] = useState(false);
-  const [authError, setAuthError] = useState('');
 
-  const [messages, setMessages] = useState<any[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [repoFiles, setRepoFiles] = useState<{content: string, language: string, filename: string}[]>([]);
   
   const [input, setInput] = useState("");
@@ -36,16 +38,16 @@ export default function DialogTreeHome() {
   const [loading, setLoading] = useState(false);
   const [switching, setSwitching] = useState(false);
   
-  const [workspace, setWorkspace] = useState<any>(null);
-  const [activeBranch, setActiveBranch] = useState<any>(null);
-  const [branches, setBranches] = useState<any[]>([]);
-  const [recentWorkspaces, setRecentWorkspaces] = useState<{id: string, name: string}[]>([]);
+  const [workspace, setWorkspace] = useState<Workspace | null>(null);
+  const [activeBranch, setActiveBranch] = useState<Branch | null>(null);
+  const [branches, setBranches] = useState<Branch[]>([]);
+  const [recentWorkspaces, setRecentWorkspaces] = useState<Workspace[]>([]);
 
   const [editingWsId, setEditingWsId] = useState<string | null>(null);
   const [editWsName, setEditWsName] = useState("");
   const [undoToast, setUndoToast] = useState<{ id: string, name: string, timer?: NodeJS.Timeout } | null>(null);
 
-  const [activeArtifact, setActiveArtifact] = useState<{code: string, lang: string, filename: string} | null>(null);
+  const [activeArtifact, setActiveArtifact] = useState<Artifact | null>(null);
   const [editorTab, setEditorTab] = useState<'code' | 'preview'>('code');
   const [editorWidth, setEditorWidth] = useState(45); 
   
@@ -53,6 +55,7 @@ export default function DialogTreeHome() {
   const [copilotInput, setCopilotInput] = useState("");
   const [editorErrors, setEditorErrors] = useState<any[]>([]);
 
+  // Modals & Github State
   const [githubModalOpen, setGithubModalOpen] = useState(false);
   const [githubRepo, setGithubRepo] = useState("");
   const [githubCommitMsg, setGithubCommitMsg] = useState("");
@@ -67,7 +70,6 @@ export default function DialogTreeHome() {
   
   const [deployStatus, setDeployStatus] = useState<'idle' | 'building' | 'success' | 'error'>('idle');
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
-
   const [pipelineTasks, setPipelineTasks] = useState<{label: string, status: 'pending'|'active'|'done'}[]>([]);
 
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -85,10 +87,9 @@ export default function DialogTreeHome() {
 
   const [forkModal, setForkModal] = useState({ isOpen: false, messageId: null as string | null, name: "", isEphemeral: true });
   const [prModalOpen, setPrModalOpen] = useState(false);
-  const [mainArtifacts, setMainArtifacts] = useState<{code: string, lang: string, filename: string}[]>([]);
+  const [mainArtifacts, setMainArtifacts] = useState<Artifact[]>([]);
   const [isDiffLoading, setIsDiffLoading] = useState(false);
 
-  // 🔥 NEW: AI MODE STATE
   const [aiModeMenuOpen, setAiModeMenuOpen] = useState(false);
   const [aiMode, setAiMode] = useState<'standard' | 'deepthink' | 'orchestrate' | 'agent'>('standard');
 
@@ -134,8 +135,8 @@ export default function DialogTreeHome() {
   }, [editorWidth]);
 
   useEffect(() => {
-    supabase.auth.getSession().then(({ data: { session } }) => { setSession(session); if (!session) setIsInitializing(false); });
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => { setSession(session); if (!session) setIsInitializing(false); });
+    supabase.auth.getSession().then(({ data: { session } }) => { setSession(session as any); if (!session) setIsInitializing(false); });
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => { setSession(session as any); if (!session) setIsInitializing(false); });
 
     setGithubRepo(localStorage.getItem('dialogtree_github_repo') || "");
     setGithubToken(localStorage.getItem('dialogtree_github_token') || "");
@@ -181,7 +182,10 @@ export default function DialogTreeHome() {
             setWorkspace(null); 
         }
         setIsInitializing(false);
-      } catch (err: any) { setWorkspace(null); setIsInitializing(false); }
+      } catch (err: any) { 
+          toast.error(`Backend Error: ${err.message}`);
+          setWorkspace(null); setIsInitializing(false); 
+      }
     };
     setup();
   }, [session?.user?.id]);
@@ -238,29 +242,34 @@ export default function DialogTreeHome() {
   };
 
   const handleEmailAuth = async (e: React.FormEvent) => {
-    e.preventDefault(); setAuthLoading(true); setAuthError('');
+    e.preventDefault(); setAuthLoading(true);
     try {
       if (isSignUp) {
         const { data, error } = await supabase.auth.signUp({ email: authEmail, password: authPassword, options: { data: { full_name: authName } } });
         if (error) throw error;
-        if (data.user && !data.session) { setAuthEmail(''); setAuthPassword(''); setAuthName(''); setIsSignUp(false); }
+        if (data.user && !data.session) { 
+            toast.success('Registration successful! Please check your email.');
+            setAuthEmail(''); setAuthPassword(''); setAuthName(''); setIsSignUp(false); 
+        }
       } else {
         const { error } = await supabase.auth.signInWithPassword({ email: authEmail, password: authPassword });
         if (error) throw error;
+        toast.success('Welcome back!');
       }
-    } catch (error: any) { setAuthError(error.message); } finally { setAuthLoading(false); }
+    } catch (error: any) { toast.error(error.message); } finally { setAuthLoading(false); }
   };
 
   const handleOAuth = async (provider: 'google' | 'github') => { await supabase.auth.signInWithOAuth({ provider }); };
-  const handleLogout = async () => { await supabase.auth.signOut(); setWorkspace(null); setActiveBranch(null); setMessages([]); setRepoFiles([]); };
+  const handleLogout = async () => { await supabase.auth.signOut(); setWorkspace(null); setActiveBranch(null); setMessages([]); setRepoFiles([]); toast.success('Logged out securely.'); };
 
   const createNewWorkspace = () => { const hash = Math.floor(1000 + Math.random() * 9000); window.location.href = `/?newWsName=Untitled Workspace ${hash}`; };
 
   const spawnTemplate = async (type: 'react-vite' | 'nextjs') => {
       setLoading(true);
+      const toastId = toast.loading(`Spawning ${type === 'react-vite' ? 'React' : 'Next.js'} Template...`);
       try {
           const wsName = type === 'react-vite' ? 'React + Vite App' : 'Next.js App';
-          const initData = await api.init(session.user.id, wsName, null);
+          const initData = await api.init(session!.user.id, wsName, null);
           const newBranchId = initData.branch.id;
 
           let files: any[] = [];
@@ -280,8 +289,11 @@ export default function DialogTreeHome() {
               content: `✅ **Successfully scaffolded ${wsName} template.**`
           });
 
+          toast.success('Template deployed successfully!', { id: toastId });
           window.location.href = `/?workspace=${initData.workspace.id}`;
-      } catch (err: any) { alert("Failed to spawn template."); } finally { setLoading(false); }
+      } catch (err: any) { 
+          toast.error("Failed to spawn template.", { id: toastId }); 
+      } finally { setLoading(false); }
   };
 
   const saveWorkspaceRename = async (wsId: string) => {
@@ -291,7 +303,8 @@ export default function DialogTreeHome() {
           const updated = recentWorkspaces.map(w => w.id === wsId ? { ...w, name: editWsName } : w);
           localStorage.setItem('recent_workspaces', JSON.stringify(updated)); setRecentWorkspaces(updated);
           if (workspace?.id === wsId) setWorkspace({ ...workspace, name: editWsName });
-      } catch (err) {} finally { setEditingWsId(null); }
+          toast.success('Workspace renamed');
+      } catch (err) { toast.error('Failed to rename workspace'); } finally { setEditingWsId(null); }
   };
 
   const triggerDeleteWorkspace = (wsId: string, wsName: string, e: React.MouseEvent) => {
@@ -310,11 +323,11 @@ export default function DialogTreeHome() {
           setRecentWorkspaces(restored); localStorage.setItem('recent_workspaces', JSON.stringify(restored));
           if (!workspace) switchWorkspace(undoToast.id);
           setUndoToast(null);
+          toast.success('Deletion reverted');
       }
   };
 
   const simulatePipeline = () => {
-      // Different visual pipelines based on the mode selected
       if (aiMode === 'orchestrate') {
           setPipelineTasks([
               { label: "Agent 1: Architecting solution...", status: 'active' },
@@ -340,7 +353,6 @@ export default function DialogTreeHome() {
       setTimeout(() => setPipelineTasks([]), 5000); 
   };
 
-  // 🔥 UPDATED: SECRET AI MODE LOGIC INJECTOR
   const handleSend = async (overridePrompt?: string) => {
     let finalPrompt = (overridePrompt || input).trim();
     if (!finalPrompt && selectedFiles.length === 0) return;
@@ -362,7 +374,6 @@ export default function DialogTreeHome() {
     let displayPrompt = finalPrompt;
     if (currentAttachments.length > 0) displayPrompt += `\n\n*(Uploaded ${currentAttachments.length} Context Artifacts)*`;
 
-    // 🧠 INJECT MODE LOGIC INVISIBLY INTO THE PAYLOAD (User only sees their clean prompt in the chat)
     let systemInjectedPrompt = finalPrompt;
     if (aiMode === 'deepthink') {
         systemInjectedPrompt = `[DEEPTHINK MODE ACTIVATED]\nBefore writing any code, write out a comprehensive step-by-step reasoning wrapped in <think>...</think> tags. Consider edge cases, security, and performance. Then, provide the final code.\n\nUSER PROMPT: ${finalPrompt}`;
@@ -375,15 +386,15 @@ export default function DialogTreeHome() {
     const lastMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
     const safeHistory = messages.filter(m => !(m.role === 'system' && m.content.includes('✅ **Imported')));
     
-    // Show the user's pure prompt in the UI immediately
+    // Optimistic UI update
     setMessages(prev => [...prev, { role: 'user', content: displayPrompt, id: 'temp' }]);
 
     try {
-      // Send the chemically-altered prompt to the backend
       const data = await api.chat(activeBranch.id, systemInjectedPrompt, lastMsgId, safeHistory, currentAttachments);
       if (data.error) throw new Error(data.error);
     } catch (err: any) {
-      setMessages(prev => prev.filter(m => m.id !== 'temp')); alert(`Failed to get AI response: \n\n${err.message}`);
+      setMessages(prev => prev.filter(m => m.id !== 'temp')); 
+      toast.error(`AI Engine Error: ${err.message}`);
     } finally { setLoading(false); setPipelineTasks([]); }
   };
 
@@ -403,6 +414,7 @@ export default function DialogTreeHome() {
       let engineeredPrompt = `The recent deployment of this branch failed.\n\nPlease analyze the code in this branch for any compilation, build, or syntax errors, explain what caused the crash, and provide the fully corrected files.`;
 
       if (vercelToken) {
+          const loadId = toast.loading('Fetching remote build logs...');
           try {
               const depRes = await fetch(`https://api.vercel.com/v6/deployments?state=ERROR&limit=1`, { headers: { 'Authorization': `Bearer ${vercelToken}` } });
               const depData = await depRes.json();
@@ -410,15 +422,15 @@ export default function DialogTreeHome() {
                   const eventRes = await fetch(`https://api.vercel.com/v2/deployments/${depData.deployments[0].uid}/events`, { headers: { 'Authorization': `Bearer ${vercelToken}` } });
                   const eventData = await eventRes.json();
                   const errorLogs = eventData.filter((log: any) => log.type === 'error').map((l:any) => l.text).join('\n');
-                  if (errorLogs) engineeredPrompt = `My Vercel deployment just failed. Here are the exact build logs:\n\n\`\`\`\n${errorLogs}\n\`\`\`\n\nFind the file causing this error, fix it, and give me the complete corrected code.`;
+                  if (errorLogs) {
+                      engineeredPrompt = `My Vercel deployment just failed. Here are the exact build logs:\n\n\`\`\`\n${errorLogs}\n\`\`\`\n\nFind the file causing this error, fix it, and give me the complete corrected code.`;
+                      toast.success('Logs retrieved. Analyzing...', { id: loadId });
+                  }
               }
-          } catch (err) {}
+          } catch (err) { toast.error('Could not fetch logs. Running blind analysis.', { id: loadId }); }
       }
       
-      // If we are in Agent mode, we tell it it's an auto-loop!
-      if (aiMode === 'agent') {
-          engineeredPrompt = `[AUTONOMOUS LOOP] ` + engineeredPrompt + `\n\nFix this silently and perfectly so the next deployment succeeds.`;
-      }
+      if (aiMode === 'agent') engineeredPrompt = `[AUTONOMOUS LOOP] ` + engineeredPrompt + `\n\nFix this silently and perfectly so the next deployment succeeds.`;
       
       handleSend(engineeredPrompt);
   };
@@ -426,21 +438,36 @@ export default function DialogTreeHome() {
   const submitFork = async () => {
     if (!forkModal.name.trim() || !forkModal.messageId) return;
     setLoading(true); setForkModal(prev => ({ ...prev, isOpen: false })); 
-    try { await api.branch(workspace.id, forkModal.name, forkModal.isEphemeral, forkModal.messageId, activeBranch.id); } 
-    catch (err) { alert("Failed to create new timeline."); } finally { setLoading(false); }
+    try { 
+        await api.branch(workspace.id, forkModal.name, forkModal.isEphemeral, forkModal.messageId, activeBranch!.id); 
+        toast.success(`Diverged timeline to ${forkModal.name}`);
+    } 
+    catch (err) { toast.error("Failed to create new timeline."); } finally { setLoading(false); }
   };
 
   const deleteBranch = async (branchId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    if (!window.confirm("Are you sure you want to permanently delete this branch?")) return;
-    try {
-      await api.deleteBranch(branchId);
-      if (activeBranch?.id === branchId) setActiveBranch(branches.find(b => b.name === 'main') || null);
-    } catch (err) { console.error("Failed to delete", err); }
+    // Using a custom toast instead of window.confirm for premium UI
+    toast((t) => (
+        <div className="flex flex-col gap-3">
+            <span className="text-sm font-semibold">Delete this timeline forever?</span>
+            <div className="flex gap-2 justify-end">
+                <button onClick={() => toast.dismiss(t.id)} className="px-3 py-1 bg-zinc-800 text-xs rounded hover:bg-zinc-700">Cancel</button>
+                <button onClick={async () => {
+                    toast.dismiss(t.id);
+                    try {
+                        await api.deleteBranch(branchId);
+                        if (activeBranch?.id === branchId) setActiveBranch(branches.find(b => b.name === 'main') || null);
+                        toast.success('Timeline deleted');
+                    } catch (err) { toast.error("Failed to delete"); }
+                }} className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-500">Delete</button>
+            </div>
+        </div>
+    ), { duration: 5000 });
   };
 
   const initiateMerge = async () => {
-    if (!activeBranch || activeBranch.name === 'main') { alert("You are already in the main timeline! You must be in a branch to merge."); return; }
+    if (!activeBranch || activeBranch.name === 'main') { toast.error("You are already in the main timeline!"); return; }
     setPrModalOpen(true); setIsDiffLoading(true);
     try {
         const mainBranch = branches.find(b => b.name === 'main');
@@ -457,24 +484,26 @@ export default function DialogTreeHome() {
     const latestSourceMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
     if (!mainBranch || !latestSourceMsgId) return;
     setLoading(true); setPrModalOpen(false);
+    const loadId = toast.loading('Merging timelines...');
     try {
-      const res = await api.merge(activeBranch.id, mainBranch.id, latestSourceMsgId, null, messages);
+      const res = await api.merge(activeBranch!.id, mainBranch.id, latestSourceMsgId, null, messages);
       if(res.error) throw new Error(res.error);
-      await api.deleteBranch(activeBranch.id);
+      await api.deleteBranch(activeBranch!.id);
       setActiveBranch(mainBranch); 
-    } catch(e: any) { alert(`Merge failed: ${e.message}`); } finally { setLoading(false); }
+      toast.success('Timelines merged successfully!', { id: loadId });
+    } catch(e: any) { toast.error(`Merge failed: ${e.message}`, { id: loadId }); } finally { setLoading(false); }
   };
 
-  // 🔥 UPDATED: AGENT AUTO-LOOP TRIGGER
   const executeGithubPush = async () => {
-      if (!githubRepo || !githubCommitMsg || !activeArtifact || !githubToken) { alert("Please fill in all repository and token fields!"); return; }
+      if (!githubRepo || !githubCommitMsg || !activeArtifact || !githubToken) { toast.error("Please fill in all fields!"); return; }
       setGithubPushing(true);
+      const loadId = toast.loading('Pushing to GitHub...');
       try {
           const filesToSend = githubPushAll ? allArtifacts.map(art => ({ path: art.filename, content: art.code })) : [{ path: activeArtifact.filename, content: activeArtifact.code }];
           const res = await api.pushToGithub(githubRepo, activeBranch?.name || 'main', filesToSend, githubCommitMsg, githubToken);
           if (res.error) throw new Error(res.error);
           
-          alert(`Successfully pushed to GitHub! Vercel/Render build started.`);
+          toast.success(`Pushed to GitHub! Monitoring CI/CD build...`, { id: loadId });
           setGithubModalOpen(false); setGithubCommitMsg(""); setDeployStatus('building');
           
           if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
@@ -487,24 +516,25 @@ export default function DialogTreeHome() {
                   const statusData = await statusRes.json();
                   if (statusData.state === 'success') {
                       setDeployStatus('success'); clearInterval(pollIntervalRef.current as NodeJS.Timeout);
+                      toast.success('Live Deployment Successful!');
                       setTimeout(() => setDeployStatus('idle'), 5000);
                   } else if (statusData.state === 'failure' || statusData.state === 'error') {
                       setDeployStatus('error'); clearInterval(pollIntervalRef.current as NodeJS.Timeout);
-                      
-                      // 🤖 THE AGENT LOOP 🤖
+                      toast.error('Deployment Failed.');
                       if (aiMode === 'agent') {
-                          console.log("Agent detected failure. Auto-healing...");
+                          toast.loading('Agent auto-healing activated...');
                           executeAutoHealer();
                       }
                   }
               } catch (err) {}
           }, 5000);
-      } catch (err: any) { alert("GitHub Push Failed.\n\nError: " + err.message); } finally { setGithubPushing(false); }
+      } catch (err: any) { toast.error(err.message, { id: loadId }); } finally { setGithubPushing(false); }
   };
 
   const executeGithubFetchTree = async () => {
       if (!githubRepo) return;
       setGithubImporting(true);
+      const loadId = toast.loading('Fetching repository map...');
       try {
           const res = await api.getGithubTree(githubRepo, githubToken);
           if (res.error) throw new Error(res.error);
@@ -518,7 +548,8 @@ export default function DialogTreeHome() {
               });
           });
           setFolderStructure(root); setImportStep('select');
-      } catch (err: any) { alert("Failed to fetch repo structure.\n\nError: " + err.message); } finally { setGithubImporting(false); }
+          toast.success('Map loaded.', { id: loadId });
+      } catch (err: any) { toast.error(err.message, { id: loadId }); } finally { setGithubImporting(false); }
   };
 
   const toggleFileSelection = (path: string) => {
@@ -544,6 +575,7 @@ export default function DialogTreeHome() {
   const executeGithubImportFiles = async () => {
       if (!activeBranch || selectedTreeFiles.size === 0) return;
       setGithubImporting(true);
+      const loadId = toast.loading(`Importing ${selectedTreeFiles.size} files...`);
       try {
           const filesToFetch = repoTree.filter(f => selectedTreeFiles.has(f.path));
           const res = await api.importGithubFiles(githubRepo, filesToFetch, githubToken);
@@ -564,13 +596,14 @@ export default function DialogTreeHome() {
           });
           
           setImportModalOpen(false); setImportStep('input');
-      } catch (err: any) { alert("Import Failed.\n\nError: " + err.message); } finally { setGithubImporting(false); }
+          toast.success('Files successfully injected.', { id: loadId });
+      } catch (err: any) { toast.error(err.message, { id: loadId }); } finally { setGithubImporting(false); }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files) return;
     const files = Array.from(e.target.files);
-    if (files.some(f => f.size > 1024 * 1024 * 10)) { alert("One of your files is too large. Keep under 10MB per file."); return; }
+    if (files.some(f => f.size > 1024 * 1024 * 10)) { toast.error("File exceeds 10MB limit."); return; }
     const newFiles = await Promise.all(files.map(file => {
       return new Promise<{name: string, base64: string, type: string, ext: string}>((resolve) => {
         const reader = new FileReader();
@@ -582,6 +615,29 @@ export default function DialogTreeHome() {
     if(fileInputRef.current) fileInputRef.current.value = ''; 
   };
 
+  const handleChitchatSend = async () => {
+    if (!chitchatInput.trim() || !workspace) return;
+    const msg = chitchatInput;
+    setChitchatInput("");
+    const userName = session!.user.user_metadata?.full_name || session!.user.email.split('@')[0];
+    if (msg.includes('@gemini')) {
+        setChitchatLoading(true);
+        try {
+            const aiHistory = chitchatMsgs.map(m => ({ role: m.role === 'ai' ? 'model' : 'user', parts: [{ text: m.content }]}));
+            await api.chitchat(workspace.id, userName, msg, aiHistory);
+        } catch (e) {} finally { setChitchatLoading(false); }
+    } else {
+        await api.chitchat(workspace.id, userName, msg);
+    }
+  };
+
+  const copyShareLink = () => {
+    if (workspace?.id) {
+        navigator.clipboard.writeText(`${window.location.origin}?workspace=${workspace.id}`);
+        toast.success("Invite link copied to clipboard!");
+    }
+  };
+
   const MarkdownComponents = {
     code({node, inline, className, children, ...props}: any) {
       const match = /language-(\w+)/.exec(className || '');
@@ -591,7 +647,7 @@ export default function DialogTreeHome() {
           <div className="flex items-center justify-between px-4 py-2 bg-[#1e1e1e] border-b border-zinc-800/50">
              <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">{match[1]}</span>
              <div className="opacity-0 group-hover:opacity-100 transition-opacity flex gap-2">
-               <button onClick={() => navigator.clipboard.writeText(codeString)} className="text-zinc-400 hover:text-zinc-200 text-xs">Copy</button>
+               <button onClick={() => { navigator.clipboard.writeText(codeString); toast.success('Copied to clipboard'); }} className="text-zinc-400 hover:text-zinc-200 text-xs">Copy</button>
                <button onClick={() => { setActiveArtifact({ code: codeString, lang: match[1], filename: 'snippet' }); setEditorTab('code'); }} className="text-indigo-400 hover:text-indigo-300 text-xs font-semibold ml-2 flex items-center gap-1"><Code size={12}/> Edit</button>
              </div>
           </div>
@@ -616,6 +672,7 @@ export default function DialogTreeHome() {
   if (!session) {
     return (
         <div className="flex h-screen bg-zinc-950 font-sans">
+          <Toaster position="bottom-right" toastOptions={{ style: { background: '#18181b', color: '#e4e4e7', border: '1px solid #27272a' } }} />
           <div className="hidden lg:flex flex-col justify-between w-1/2 bg-zinc-900 border-r border-zinc-800 p-12 relative overflow-hidden">
             <div className="absolute inset-0 bg-gradient-to-br from-indigo-900/20 to-transparent pointer-events-none" />
             <div className="relative z-10 flex items-center gap-3">
@@ -637,6 +694,19 @@ export default function DialogTreeHome() {
                 <button onClick={() => handleOAuth('google')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><Globe size={16} className="text-zinc-400" /> Google</button>
                 <button onClick={() => handleOAuth('github')} className="flex-1 flex items-center justify-center gap-2 py-2.5 px-4 bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl text-zinc-300 text-sm font-medium transition-all"><GitCommit size={16} className="text-zinc-400" /> GitHub</button>
               </div>
+              <div className="relative flex items-center py-4 mb-2">
+                <div className="flex-grow border-t border-zinc-800"></div><span className="flex-shrink-0 mx-4 text-zinc-500 text-xs uppercase tracking-widest">Or continue with email</span><div className="flex-grow border-t border-zinc-800"></div>
+              </div>
+              <form onSubmit={handleEmailAuth} className="space-y-4">
+                {authError && <div className="bg-red-500/10 border border-red-500/50 text-red-400 text-sm p-3 rounded-lg">{authError}</div>}
+                {isSignUp && (
+                  <div><label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Full Name</label><input type="text" value={authName} onChange={e => setAuthName(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500" placeholder="Jane Doe" /></div>
+                )}
+                <div><label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Email</label><input type="email" value={authEmail} onChange={e => setAuthEmail(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500" placeholder="engineer@example.com" /></div>
+                <div><label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Password</label><input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500" placeholder="••••••••" /></div>
+                <button type="submit" disabled={authLoading} className="w-full bg-white hover:bg-zinc-200 text-zinc-950 font-semibold py-3 rounded-xl transition-all disabled:opacity-50 flex justify-center items-center gap-2 mt-4">{authLoading ? <Loader2 size={18} className="animate-spin text-zinc-500" /> : null}{isSignUp ? 'Create Account' : 'Sign In'}</button>
+              </form>
+              <div className="mt-8 text-center"><button onClick={() => { setIsSignUp(!isSignUp); setAuthError(''); }} className="text-sm text-zinc-500 hover:text-indigo-400 transition-colors">{isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}</button></div>
             </div>
           </div>
         </div>
@@ -646,6 +716,9 @@ export default function DialogTreeHome() {
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans relative overflow-hidden">
       
+      {/* 🔥 THE TOASTER COMPONENT */}
+      <Toaster position="bottom-right" toastOptions={{ style: { background: '#18181b', color: '#e4e4e7', border: '1px solid #27272a' } }} />
+
       {workspace && session && <MultiplayerCursors workspaceId={workspace.id} user={session.user} />}
 
       {undoToast && (
@@ -941,7 +1014,6 @@ export default function DialogTreeHome() {
                 <div className="p-6 pt-2 shrink-0">
                   <div className="max-w-4xl mx-auto relative group flex items-end gap-3 bg-zinc-900 border border-zinc-800 rounded-3xl p-2 shadow-xl focus-within:border-indigo-500/50 focus-within:ring-1 focus-within:ring-indigo-500/50 transition-all">
                     
-                    {/* 🔥 THE NEW AI MODE SELECTOR (OVER-DELIVERY) */}
                     <div className="relative">
                         <button onClick={() => setAiModeMenuOpen(!aiModeMenuOpen)} className={`p-3.5 rounded-2xl transition-all mb-1 ${aiMode !== 'standard' ? 'bg-indigo-900/30 text-indigo-400' : 'bg-zinc-800/50 text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800'}`} title="AI Agent Mode">
                             {aiMode === 'standard' ? <Sparkles size={20} /> : aiMode === 'deepthink' ? <BrainCircuit size={20} /> : aiMode === 'orchestrate' ? <Network size={20} /> : <Bot size={20} />}
