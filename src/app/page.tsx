@@ -6,7 +6,6 @@ import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 
-// Highlighters and Editor
 import Editor, { useMonaco } from "@monaco-editor/react";
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
@@ -14,19 +13,14 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { getBranchDepth, downloadCode, downloadAllArtifacts, extractAllArtifacts, exportMD, exportPDF } from '@/lib/dialogUtils';
 import MergeRequestModal from '@/components/MergeRequestModal';
 
-// 🔥 REBUILT FOLDER TREE UI (Robust and Deeply Selectable)
+// FOLDER TREE UI
 const FolderTreeItem = ({ node, path, selectedFiles, toggleFile, toggleFolder }: any) => {
     const [isOpen, setIsOpen] = useState(true);
     
     if (node._isFile) {
         return (
             <label className="flex items-center gap-3 text-sm text-zinc-300 hover:bg-zinc-800/80 p-1.5 rounded cursor-pointer transition-colors ml-4 border border-transparent hover:border-zinc-800">
-                <input 
-                    type="checkbox" 
-                    checked={selectedFiles.has(path)} 
-                    onChange={() => toggleFile(path)} 
-                    className="rounded bg-zinc-900 border-zinc-700 text-emerald-600 focus:ring-emerald-600 w-4 h-4 cursor-pointer" 
-                />
+                <input type="checkbox" checked={selectedFiles.has(path)} onChange={() => toggleFile(path)} className="rounded bg-zinc-900 border-zinc-700 text-emerald-600 focus:ring-emerald-600 w-4 h-4 cursor-pointer" />
                 <File size={14} className="text-zinc-500 shrink-0" />
                 <span className="truncate font-mono text-[13px]">{path.split('/').pop()}</span>
             </label>
@@ -52,13 +46,7 @@ const FolderTreeItem = ({ node, path, selectedFiles, toggleFile, toggleFolder }:
         <div className="ml-4 mt-1">
             <div className="flex items-center gap-2 text-sm text-zinc-200 hover:bg-zinc-800/50 p-1.5 rounded transition-colors group">
                 <div onClick={(e) => { e.stopPropagation(); toggleFolder(allNestedFiles, !isAllSelected); }} className="cursor-pointer flex items-center justify-center w-5 h-5">
-                    <input 
-                        type="checkbox" 
-                        checked={isAllSelected}
-                        ref={input => { if (input) input.indeterminate = isSomeSelected && !isAllSelected; }}
-                        onChange={() => {}} 
-                        className="rounded bg-zinc-900 border-zinc-700 text-emerald-600 focus:ring-emerald-600 w-4 h-4 cursor-pointer" 
-                    />
+                    <input type="checkbox" checked={isAllSelected} ref={input => { if (input) input.indeterminate = isSomeSelected && !isAllSelected; }} onChange={() => {}} className="rounded bg-zinc-900 border-zinc-700 text-emerald-600 focus:ring-emerald-600 w-4 h-4 cursor-pointer" />
                 </div>
                 <div className="flex items-center gap-1.5 flex-1 cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
                     <ChevronRight size={14} className={`transition-transform text-zinc-500 group-hover:text-zinc-300 ${isOpen ? 'rotate-90' : ''}`} />
@@ -69,14 +57,7 @@ const FolderTreeItem = ({ node, path, selectedFiles, toggleFile, toggleFolder }:
             {isOpen && (
                 <div className="border-l border-zinc-800/50 ml-2.5 mt-1 space-y-0.5">
                     {childrenKeys.map(key => (
-                        <FolderTreeItem 
-                            key={key} 
-                            node={node[key]} 
-                            path={path ? `${path}/${key}` : key} 
-                            selectedFiles={selectedFiles} 
-                            toggleFile={toggleFile} 
-                            toggleFolder={toggleFolder} 
-                        />
+                        <FolderTreeItem key={key} node={node[key]} path={path ? `${path}/${key}` : key} selectedFiles={selectedFiles} toggleFile={toggleFile} toggleFolder={toggleFolder} />
                     ))}
                 </div>
             )}
@@ -98,6 +79,10 @@ export default function DialogTreeHome() {
   const [verifyMessage, setVerifyMessage] = useState('');
 
   const [messages, setMessages] = useState<any[]>([]);
+  
+  // 🔥 NEW: State to hold the base files imported from GitHub
+  const [repoFiles, setRepoFiles] = useState<{content: string, language: string, filename: string}[]>([]);
+  
   const [input, setInput] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<{name: string, base64: string, type: string, ext: string}[]>([]);
   const [loading, setLoading] = useState(false);
@@ -107,17 +92,14 @@ export default function DialogTreeHome() {
   const [branches, setBranches] = useState<any[]>([]);
   const [recentWorkspaces, setRecentWorkspaces] = useState<{id: string, name: string}[]>([]);
 
-  // Editor vs Preview Tab
   const [activeArtifact, setActiveArtifact] = useState<{code: string, lang: string, filename: string} | null>(null);
   const [editorTab, setEditorTab] = useState<'code' | 'preview'>('code');
   const [editorWidth, setEditorWidth] = useState(45); 
   
-  // Inline Copilot & Bug Squasher
   const [editorSelection, setEditorSelection] = useState("");
   const [copilotInput, setCopilotInput] = useState("");
   const [editorErrors, setEditorErrors] = useState<any[]>([]);
 
-  // GITHUB STATE
   const [githubModalOpen, setGithubModalOpen] = useState(false);
   const [githubRepo, setGithubRepo] = useState("");
   const [githubCommitMsg, setGithubCommitMsg] = useState("");
@@ -125,7 +107,6 @@ export default function DialogTreeHome() {
   const [githubPushAll, setGithubPushAll] = useState(true); 
   const [githubPushing, setGithubPushing] = useState(false);
 
-  // IMPORT STATE
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importStep, setImportStep] = useState<'input' | 'select'>('input');
   const [repoTree, setRepoTree] = useState<any[]>([]);
@@ -146,12 +127,21 @@ export default function DialogTreeHome() {
   const [isDiffLoading, setIsDiffLoading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  
+  // 🔥 THE MERGE ENGINE: Combines Base Repo Files with New AI Chat Edits
   const timelineArtifacts = extractAllArtifacts(messages);
+  const allArtifacts = [...repoFiles.map(f => ({ code: f.content, lang: f.language, filename: f.filename }))];
+  
+  timelineArtifacts.forEach(art => {
+      const existingIdx = allArtifacts.findIndex(a => a.filename === art.filename);
+      if (existingIdx >= 0) allArtifacts[existingIdx] = art; // AI edit overwrites base file!
+      else allArtifacts.push(art); // Brand new file created by AI
+  });
 
   const getPreviewHtml = () => {
-      let html = timelineArtifacts.find(a => a.lang === 'html' || a.filename.endsWith('.html'))?.code || '<div style="color:black; font-family:sans-serif; text-align:center; margin-top: 50px;"><h2>No HTML file found</h2><p>Ask the AI to generate an index.html file to see the preview!</p></div>';
-      const css = timelineArtifacts.find(a => a.lang === 'css' || a.filename.endsWith('.css'))?.code || '';
-      const js = timelineArtifacts.find(a => a.lang.includes('js') || a.filename.endsWith('.js'))?.code || '';
+      let html = allArtifacts.find(a => a.lang === 'html' || a.filename.endsWith('.html'))?.code || '<div style="color:black; font-family:sans-serif; text-align:center; margin-top: 50px;"><h2>No HTML file found</h2><p>Ask the AI to generate an index.html file to see the preview!</p></div>';
+      const css = allArtifacts.find(a => a.lang === 'css' || a.filename.endsWith('.css'))?.code || '';
+      const js = allArtifacts.find(a => a.lang.includes('js') || a.filename.endsWith('.js'))?.code || '';
 
       if (html.includes('</head>')) html = html.replace('</head>', `<style>${css}</style></head>`);
       else html = `<style>${css}</style>` + html;
@@ -254,27 +244,41 @@ export default function DialogTreeHome() {
   }, [session?.user?.id]);
 
   useEffect(() => {
-    const loadHistory = async () => {
+    const loadHistoryAndFiles = async () => {
       if (!activeBranch) return;
       setSwitching(true);
       setActiveArtifact(null); 
       setEditorErrors([]);
       try {
+        // 1. Load Messages
         const historyData = await api.getMessages(activeBranch.id);
         setMessages(historyData.messages || []);
+        
+        // 2. Load Base Files
+        const { data: fileData } = await supabase.from('files').select('*').eq('branch_id', activeBranch.id);
+        if (fileData) setRepoFiles(fileData);
+
       } catch (err) {} finally {
         setSwitching(false);
       }
     };
-    loadHistory();
+    loadHistoryAndFiles();
   }, [activeBranch]);
 
   useEffect(() => {
     if (!workspace) return;
     api.getChitchat(workspace.id).then(res => setChitchatMsgs(res.messages || []));
+    
+    // Listen for real-time updates across the system
     const channel = supabase.channel('room_updates')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
         if (activeBranch) api.getMessages(activeBranch.id).then(res => setMessages(res.messages || []));
+      })
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'files' }, async () => {
+        if (activeBranch) {
+            const { data } = await supabase.from('files').select('*').eq('branch_id', activeBranch.id);
+            if (data) setRepoFiles(data);
+        }
       })
       .on('postgres_changes', { event: '*', schema: 'public', table: 'chitchat_messages' }, () => {
         api.getChitchat(workspace.id).then(res => setChitchatMsgs(res.messages || []));
@@ -307,9 +311,8 @@ export default function DialogTreeHome() {
   };
 
   const handleOAuth = async (provider: 'google' | 'github') => { await supabase.auth.signInWithOAuth({ provider }); };
-  const handleLogout = async () => { await supabase.auth.signOut(); setWorkspace(null); setActiveBranch(null); setMessages([]); };
+  const handleLogout = async () => { await supabase.auth.signOut(); setWorkspace(null); setActiveBranch(null); setMessages([]); setRepoFiles([]); };
 
-  // 🔥 REMOVED UGLY PROMPT() - Auto Generates Cool Workspace Names
   const createNewWorkspace = () => {
       const prefixes = ['Neon', 'Quantum', 'Cyber', 'Astro', 'Nova', 'Echo'];
       const nouns = ['Nexus', 'Matrix', 'Forge', 'Node', 'Core', 'Base'];
@@ -345,7 +348,7 @@ export default function DialogTreeHome() {
     if (mentions) {
         mentions.forEach(mention => {
             const filename = mention.substring(1);
-            const file = timelineArtifacts.find(a => a.filename === filename);
+            const file = allArtifacts.find(a => a.filename === filename);
             if (file && !currentAttachments.find(a => a.name === filename)) {
                 currentAttachments.push({
                     name: filename,
@@ -440,7 +443,7 @@ export default function DialogTreeHome() {
       setGithubPushing(true);
       try {
           const filesToSend = githubPushAll 
-              ? timelineArtifacts.map(art => ({ path: art.filename, content: art.code }))
+              ? allArtifacts.map(art => ({ path: art.filename, content: art.code }))
               : [{ path: activeArtifact.filename, content: activeArtifact.code }];
 
           const res = await api.pushToGithub(githubRepo, activeBranch?.name || 'main', filesToSend, githubCommitMsg, githubToken);
@@ -485,6 +488,7 @@ export default function DialogTreeHome() {
       }
   };
 
+  // 🔥 NEW: SAVE DIRECTLY TO FILES TABLE
   const executeGithubImportFiles = async () => {
       if (!activeBranch || selectedTreeFiles.size === 0) return;
       setGithubImporting(true);
@@ -493,22 +497,29 @@ export default function DialogTreeHome() {
           const res = await api.importGithubFiles(githubRepo, filesToFetch, githubToken);
           if (res.error) throw new Error(res.error);
           
-          let systemContent = `✅ **Imported ${res.files.length} files from \`${githubRepo}\`**\n\n`;
-          
-          res.files.forEach((f: any) => {
+          // Construct the database rows
+          const fileRows = res.files.map((f: any) => {
               const ext = f.path.split('.').pop() || 'text';
               let lang = ext === 'js' ? 'javascript' : ext === 'ts' ? 'typescript' : ext === 'tsx' ? 'tsx' : ext === 'py' ? 'python' : ext;
-              systemContent += `\`\`\`${lang} filename="${f.path}"\n${f.content}\n\`\`\`\n\n`;
+              return {
+                  branch_id: activeBranch.id,
+                  filename: f.path,
+                  content: f.content,
+                  language: lang
+              };
           });
-          
-          const { error } = await supabase.from('messages').insert({
+
+          // Insert into the new Files table
+          const { error: fileError } = await supabase.from('files').insert(fileRows);
+          if (fileError) throw fileError;
+
+          // Insert a clean, tiny system message to notify the user
+          await supabase.from('messages').insert({
               branch_id: activeBranch.id,
               role: 'system',
               sender_type: 'system',
-              content: systemContent
+              content: `✅ **Imported ${res.files.length} files from \`${githubRepo}\` into the Virtual File System.**`
           });
-
-          if (error) throw error;
           
           setImportModalOpen(false);
           setImportStep('input');
@@ -705,7 +716,6 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* 🔥 FOLDER TREE IMPORT MODAL */}
       {importModalOpen && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-2xl shadow-2xl">
@@ -793,7 +803,7 @@ export default function DialogTreeHome() {
                 <div className="bg-zinc-950/50 border border-zinc-800 rounded-lg p-3">
                     <label className="flex items-center gap-2 cursor-pointer text-sm text-zinc-300">
                         <input type="checkbox" checked={githubPushAll} onChange={(e) => setGithubPushAll(e.target.checked)} className="rounded bg-zinc-900 border-zinc-700 text-indigo-600 focus:ring-indigo-600" />
-                        Push entire <b>{activeBranch?.name || 'main'}</b> timeline ({timelineArtifacts.length} files)
+                        Push entire <b>{activeBranch?.name || 'main'}</b> timeline ({allArtifacts.length} files)
                     </label>
                     {!githubPushAll && <p className="text-xs text-zinc-500 mt-2 pl-6">Only <b>{activeArtifact.filename}</b> will be pushed.</p>}
                 </div>
@@ -813,7 +823,7 @@ export default function DialogTreeHome() {
         onClose={() => setPrModalOpen(false)} 
         onConfirm={confirmMerge} 
         activeBranch={activeBranch} 
-        timelineArtifacts={timelineArtifacts} 
+        timelineArtifacts={allArtifacts} 
         mainArtifacts={mainArtifacts} 
         isDiffLoading={isDiffLoading} 
         loading={loading} 
@@ -919,8 +929,8 @@ export default function DialogTreeHome() {
                )}
             </div>
 
-            <button onClick={() => setIsArtifactSidebarOpen(!isArtifactSidebarOpen)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-medium ${isArtifactSidebarOpen || timelineArtifacts.length > 0 ? 'border-indigo-600/50 bg-indigo-900/20 text-indigo-300 hover:bg-indigo-900/40' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
-               <Library size={14} /> Artifacts ({timelineArtifacts.length})
+            <button onClick={() => setIsArtifactSidebarOpen(!isArtifactSidebarOpen)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-medium ${isArtifactSidebarOpen || allArtifacts.length > 0 ? 'border-indigo-600/50 bg-indigo-900/20 text-indigo-300 hover:bg-indigo-900/40' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
+               <Library size={14} /> Artifacts ({allArtifacts.length})
             </button>
 
             {activeBranch?.is_ephemeral && (<button onClick={makePermanent} className="flex items-center gap-2 px-4 py-1.5 rounded-lg bg-amber-900/30 border border-amber-700 hover:bg-amber-900/50 text-amber-300 text-xs font-medium transition-all"><Save size={14} /> Make Permanent</button>)}
@@ -932,7 +942,6 @@ export default function DialogTreeHome() {
         <div className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth min-h-0 custom-scrollbar" onClick={() => setExportMenuOpen(false)}>
           {switching ? (<div className="flex justify-center mt-20"><Loader2 size={24} className="animate-spin text-indigo-500" /></div>) : messages.length === 0 ? (<div className="text-center mt-20 text-zinc-500">Start typing...</div>) : (
             
-            // 🔥 SMART CHAT FILTER: Hides massive import dumps from the visual UI
             messages.filter(m => !(m.role === 'system' && m.content.includes('✅ **Imported'))).map((m, i) => {
               const displayContent = m.content.replace(/---START_ATTACHMENT:(.*?)---[\s\S]*?---END_ATTACHMENT---/g, '\n\n📎 **Attached Document:** `$1`');
               return (
@@ -996,19 +1005,19 @@ export default function DialogTreeHome() {
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
                
-               {timelineArtifacts.length > 0 && (
-                   <button onClick={() => downloadAllArtifacts(timelineArtifacts, activeBranch?.name)} className="w-full bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-600/30 text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all mb-4">
+               {allArtifacts.length > 0 && (
+                   <button onClick={() => downloadAllArtifacts(allArtifacts, activeBranch?.name)} className="w-full bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-600/30 text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all mb-4">
                        <Cloud size={14} /> Download All as ZIP
                    </button>
                )}
 
-               {timelineArtifacts.length === 0 ? (
+               {allArtifacts.length === 0 ? (
                   <div className="text-xs text-zinc-600 text-center mt-10 italic">No code generated in this timeline yet.</div>
                ) : (
-                  timelineArtifacts.map((art, idx) => (
+                  allArtifacts.map((art, idx) => (
                      <div key={idx} className="bg-zinc-900 border border-zinc-800 rounded-xl p-3 hover:border-indigo-500/50 transition-colors group cursor-pointer" onClick={() => { setActiveArtifact({ code: art.code, lang: art.lang, filename: art.filename }); setEditorTab('code'); }}>
                         <div className="flex items-center justify-between mb-2">
-                           <span className="text-[11px] font-bold text-zinc-300 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 truncate max-w-[150px]" title={art.filename}>{art.filename}</span>
+                           <span className="text-[11px] font-bold text-zinc-300 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 truncate max-w-[150px]" title={art.filename}>{art.filename.split('/').pop()}</span>
                            <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
                               <button onClick={(e) => { e.stopPropagation(); downloadCode(art.code, art.filename); }} className="text-zinc-400 hover:text-zinc-200 text-xs"><Download size={14}/></button>
                            </div>
@@ -1025,7 +1034,6 @@ export default function DialogTreeHome() {
          </aside>
       )}
 
-      {/* 🔥 RESIZABLE ARTIFACT EDITOR PANELS WITH PREVIEW AND BUG SQUASHER */}
       {activeArtifact && (
         <>
             <div 
