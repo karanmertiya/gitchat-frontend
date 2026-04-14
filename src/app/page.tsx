@@ -14,31 +14,28 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { getBranchDepth, downloadCode, downloadAllArtifacts, extractAllArtifacts, exportMD, exportPDF } from '@/lib/dialogUtils';
 import MergeRequestModal from '@/components/MergeRequestModal';
 
-// 🔥 NEW: RECURSIVE FOLDER COMPONENT FOR GITHUB IMPORT
+// 🔥 REBUILT FOLDER TREE UI (Robust and Deeply Selectable)
 const FolderTreeItem = ({ node, path, selectedFiles, toggleFile, toggleFolder }: any) => {
     const [isOpen, setIsOpen] = useState(true);
     
-    // Check if this node is a file (it has no children objects, or has a special marker)
     if (node._isFile) {
         return (
-            <label className="flex items-center gap-3 text-sm text-zinc-300 hover:bg-zinc-900 p-1.5 rounded cursor-pointer transition-colors ml-4">
+            <label className="flex items-center gap-3 text-sm text-zinc-300 hover:bg-zinc-800/80 p-1.5 rounded cursor-pointer transition-colors ml-4 border border-transparent hover:border-zinc-800">
                 <input 
                     type="checkbox" 
                     checked={selectedFiles.has(path)} 
                     onChange={() => toggleFile(path)} 
-                    className="rounded bg-zinc-900 border-zinc-700 text-emerald-600 focus:ring-emerald-600 w-4 h-4" 
+                    className="rounded bg-zinc-900 border-zinc-700 text-emerald-600 focus:ring-emerald-600 w-4 h-4 cursor-pointer" 
                 />
-                <File size={14} className="text-zinc-500" />
+                <File size={14} className="text-zinc-500 shrink-0" />
                 <span className="truncate font-mono text-[13px]">{path.split('/').pop()}</span>
             </label>
         );
     }
 
-    // It's a folder
     const folderName = path ? path.split('/').pop() : 'Root';
     const childrenKeys = Object.keys(node).filter(k => k !== '_isFile');
     
-    // Check if all files inside this folder are selected
     const allNestedFiles = childrenKeys.flatMap(k => {
         const childPath = path ? `${path}/${k}` : k;
         const extractFiles = (n: any, p: string): string[] => {
@@ -53,8 +50,8 @@ const FolderTreeItem = ({ node, path, selectedFiles, toggleFile, toggleFolder }:
 
     return (
         <div className="ml-4 mt-1">
-            <div className="flex items-center gap-2 text-sm text-zinc-200 hover:bg-zinc-800 p-1.5 rounded cursor-pointer transition-colors" onClick={() => setIsOpen(!isOpen)}>
-                <div onClick={(e) => { e.stopPropagation(); toggleFolder(allNestedFiles, !isAllSelected); }}>
+            <div className="flex items-center gap-2 text-sm text-zinc-200 hover:bg-zinc-800/50 p-1.5 rounded transition-colors group">
+                <div onClick={(e) => { e.stopPropagation(); toggleFolder(allNestedFiles, !isAllSelected); }} className="cursor-pointer flex items-center justify-center w-5 h-5">
                     <input 
                         type="checkbox" 
                         checked={isAllSelected}
@@ -63,14 +60,14 @@ const FolderTreeItem = ({ node, path, selectedFiles, toggleFile, toggleFolder }:
                         className="rounded bg-zinc-900 border-zinc-700 text-emerald-600 focus:ring-emerald-600 w-4 h-4 cursor-pointer" 
                     />
                 </div>
-                <div className="flex items-center gap-1.5 flex-1">
-                    <ChevronRight size={14} className={`transition-transform text-zinc-500 ${isOpen ? 'rotate-90' : ''}`} />
-                    <Folder size={14} className="text-indigo-400" />
-                    <span className="font-semibold text-[13px]">{folderName}</span>
+                <div className="flex items-center gap-1.5 flex-1 cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
+                    <ChevronRight size={14} className={`transition-transform text-zinc-500 group-hover:text-zinc-300 ${isOpen ? 'rotate-90' : ''}`} />
+                    <Folder size={14} className="text-indigo-400 shrink-0" />
+                    <span className="font-semibold text-[13px] select-none">{folderName}</span>
                 </div>
             </div>
             {isOpen && (
-                <div className="border-l border-zinc-800 ml-2.5">
+                <div className="border-l border-zinc-800/50 ml-2.5 mt-1 space-y-0.5">
                     {childrenKeys.map(key => (
                         <FolderTreeItem 
                             key={key} 
@@ -225,7 +222,7 @@ export default function DialogTreeHome() {
         const urlParams = new URLSearchParams(window.location.search);
         const joinId = urlParams.get('workspace');
         const customName = urlParams.get('newWsName');
-        const wsName = customName || "My First Workspace";
+        const wsName = customName || "My Workspace";
 
         const data = await api.init(session.user.id, wsName, joinId);
         if (data.error) throw new Error(data.error);
@@ -312,9 +309,12 @@ export default function DialogTreeHome() {
   const handleOAuth = async (provider: 'google' | 'github') => { await supabase.auth.signInWithOAuth({ provider }); };
   const handleLogout = async () => { await supabase.auth.signOut(); setWorkspace(null); setActiveBranch(null); setMessages([]); };
 
+  // 🔥 REMOVED UGLY PROMPT() - Auto Generates Cool Workspace Names
   const createNewWorkspace = () => {
-      const name = prompt("Enter a name for your new workspace:");
-      if (name) { window.location.href = `/?newWsName=${encodeURIComponent(name)}`; }
+      const prefixes = ['Neon', 'Quantum', 'Cyber', 'Astro', 'Nova', 'Echo'];
+      const nouns = ['Nexus', 'Matrix', 'Forge', 'Node', 'Core', 'Base'];
+      const randomName = `${prefixes[Math.floor(Math.random()*prefixes.length)]} ${nouns[Math.floor(Math.random()*nouns.length)]}`;
+      window.location.href = `/?newWsName=${encodeURIComponent(randomName)}`;
   };
 
   const deleteWorkspace = async (wsId: string, e: React.MouseEvent) => {
@@ -363,8 +363,6 @@ export default function DialogTreeHome() {
        displayPrompt += `\n\n*(Uploaded ${currentAttachments.length} Context Artifacts)*`;
     }
 
-    // 🔥 SMART CONTEXT FILTER
-    // We strip out the massive silent import blocks from the history so we don't blow up the AI's token limit!
     const safeHistory = messages.filter(m => !(m.role === 'system' && m.content.includes('✅ **Imported')));
 
     setMessages(prev => [...prev, { role: 'user', content: displayPrompt, id: 'temp' }]);
@@ -458,7 +456,6 @@ export default function DialogTreeHome() {
       }
   };
 
-  // 🔥 FOLDER STRUCTURE BUILDER
   const executeGithubFetchTree = async () => {
       if (!githubRepo) return;
       setGithubImporting(true);
@@ -469,7 +466,6 @@ export default function DialogTreeHome() {
           setRepoTree(res.tree);
           setSelectedTreeFiles(new Set(res.tree.map((f: any) => f.path)));
 
-          // Convert flat paths to nested folder object
           const root: any = {};
           res.tree.forEach((file: any) => {
               const parts = file.path.split('/');
@@ -740,14 +736,14 @@ export default function DialogTreeHome() {
             ) : (
                 <>
                     <div className="mb-4">
-                        <div className="flex justify-between items-center text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+                        <div className="flex justify-between items-center text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 border-b border-zinc-800 pb-2">
                             <span>Select files to import ({selectedTreeFiles.size} selected)</span>
                             <div className="flex gap-3">
                                 <button onClick={() => setSelectedTreeFiles(new Set(repoTree.map(f => f.path)))} className="hover:text-emerald-400 transition-colors">Select All</button>
                                 <button onClick={() => setSelectedTreeFiles(new Set())} className="hover:text-zinc-200 transition-colors">Clear</button>
                             </div>
                         </div>
-                        <div className="max-h-80 overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-lg p-2">
+                        <div className="max-h-80 overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-lg p-2 custom-scrollbar">
                             {Object.keys(folderStructure).map(key => (
                                 <FolderTreeItem 
                                     key={key} 
@@ -760,8 +756,8 @@ export default function DialogTreeHome() {
                             ))}
                         </div>
                     </div>
-                    <div className="flex justify-between items-center">
-                        <button onClick={() => setImportStep('input')} className="px-4 py-2 text-sm text-zinc-400">Back</button>
+                    <div className="flex justify-between items-center mt-6">
+                        <button onClick={() => setImportStep('input')} className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors">Back</button>
                         <button onClick={executeGithubImportFiles} disabled={githubImporting || selectedTreeFiles.size === 0} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-semibold flex items-center gap-2 shadow-lg shadow-emerald-900/20">
                             {githubImporting ? <Loader2 size={14} className="animate-spin"/> : <Import size={14}/>} Import {selectedTreeFiles.size} Files
                         </button>
@@ -841,7 +837,7 @@ export default function DialogTreeHome() {
           </div>
         </div>
         
-        <nav className="flex-1 px-3 overflow-y-auto">
+        <nav className="flex-1 px-3 overflow-y-auto custom-scrollbar">
           
           <div className="mb-6">
             <div className="text-xs font-semibold text-zinc-500 mb-2 px-2 uppercase tracking-wider flex justify-between items-center">
@@ -933,9 +929,11 @@ export default function DialogTreeHome() {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth min-h-0" onClick={() => setExportMenuOpen(false)}>
+        <div className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth min-h-0 custom-scrollbar" onClick={() => setExportMenuOpen(false)}>
           {switching ? (<div className="flex justify-center mt-20"><Loader2 size={24} className="animate-spin text-indigo-500" /></div>) : messages.length === 0 ? (<div className="text-center mt-20 text-zinc-500">Start typing...</div>) : (
-            messages.map((m, i) => {
+            
+            // 🔥 SMART CHAT FILTER: Hides massive import dumps from the visual UI
+            messages.filter(m => !(m.role === 'system' && m.content.includes('✅ **Imported'))).map((m, i) => {
               const displayContent = m.content.replace(/---START_ATTACHMENT:(.*?)---[\s\S]*?---END_ATTACHMENT---/g, '\n\n📎 **Attached Document:** `$1`');
               return (
               <div key={i} className={`flex gap-4 ${m.role === 'user' ? 'justify-end' : m.role === 'system' ? 'justify-center' : 'justify-start'}`}>
@@ -996,7 +994,7 @@ export default function DialogTreeHome() {
                <div className="flex items-center gap-2 text-zinc-200 font-semibold text-sm"><Library size={16} className="text-indigo-400" /> Artifact Library</div>
                <button onClick={() => setIsArtifactSidebarOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={16}/></button>
             </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3">
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
                
                {timelineArtifacts.length > 0 && (
                    <button onClick={() => downloadAllArtifacts(timelineArtifacts, activeBranch?.name)} className="w-full bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-600/30 text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all mb-4">
@@ -1077,7 +1075,7 @@ export default function DialogTreeHome() {
                                     value={copilotInput}
                                     onChange={e => setCopilotInput(e.target.value)}
                                     placeholder="e.g. Turn this loop into a map function..."
-                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-indigo-500 mb-3 resize-none shadow-inner"
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-indigo-500 mb-3 resize-none shadow-inner custom-scrollbar"
                                     rows={3}
                                     autoFocus
                                 />
@@ -1092,7 +1090,7 @@ export default function DialogTreeHome() {
                     <div className={`absolute inset-0 bg-white transition-opacity ${editorTab === 'preview' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
                         <iframe 
                             title="live-preview"
-                            className="w-full h-full border-none"
+                            className="w-full h-full border-none bg-white"
                             srcDoc={getPreviewHtml()}
                             sandbox="allow-scripts allow-modals"
                         />
@@ -1101,6 +1099,12 @@ export default function DialogTreeHome() {
             </aside>
         </>
       )}
+      <style dangerouslySetContent={{ __html: `
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #52525b; }
+      `}} />
     </div>
   );
 }
