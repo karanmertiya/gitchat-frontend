@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, ChevronRight } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, ChevronRight, AlertTriangle, CheckCircle2 } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -79,8 +79,6 @@ export default function DialogTreeHome() {
   const [verifyMessage, setVerifyMessage] = useState('');
 
   const [messages, setMessages] = useState<any[]>([]);
-  
-  // 🔥 NEW: State to hold the base files imported from GitHub
   const [repoFiles, setRepoFiles] = useState<{content: string, language: string, filename: string}[]>([]);
   
   const [input, setInput] = useState("");
@@ -91,6 +89,10 @@ export default function DialogTreeHome() {
   const [activeBranch, setActiveBranch] = useState<any>(null);
   const [branches, setBranches] = useState<any[]>([]);
   const [recentWorkspaces, setRecentWorkspaces] = useState<{id: string, name: string}[]>([]);
+
+  // 🔥 NEW: INLINE RENAMING STATE
+  const [editingWsId, setEditingWsId] = useState<string | null>(null);
+  const [editWsName, setEditWsName] = useState("");
 
   const [activeArtifact, setActiveArtifact] = useState<{code: string, lang: string, filename: string} | null>(null);
   const [editorTab, setEditorTab] = useState<'code' | 'preview'>('code');
@@ -106,6 +108,10 @@ export default function DialogTreeHome() {
   const [githubToken, setGithubToken] = useState("");
   const [githubPushAll, setGithubPushAll] = useState(true); 
   const [githubPushing, setGithubPushing] = useState(false);
+
+  // 🔥 NEW: CI/CD DEPLOYMENT STATUS STATE
+  const [deployStatus, setDeployStatus] = useState<'idle' | 'building' | 'success' | 'error'>('idle');
+  const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importStep, setImportStep] = useState<'input' | 'select'>('input');
@@ -128,14 +134,13 @@ export default function DialogTreeHome() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   
-  // 🔥 THE MERGE ENGINE: Combines Base Repo Files with New AI Chat Edits
   const timelineArtifacts = extractAllArtifacts(messages);
   const allArtifacts = [...repoFiles.map(f => ({ code: f.content, lang: f.language, filename: f.filename }))];
   
   timelineArtifacts.forEach(art => {
       const existingIdx = allArtifacts.findIndex(a => a.filename === art.filename);
-      if (existingIdx >= 0) allArtifacts[existingIdx] = art; // AI edit overwrites base file!
-      else allArtifacts.push(art); // Brand new file created by AI
+      if (existingIdx >= 0) allArtifacts[existingIdx] = art; 
+      else allArtifacts.push(art); 
   });
 
   const getPreviewHtml = () => {
@@ -202,7 +207,10 @@ export default function DialogTreeHome() {
     setGithubRepo(localStorage.getItem('dialogtree_github_repo') || "");
     setGithubToken(localStorage.getItem('dialogtree_github_token') || "");
 
-    return () => subscription.unsubscribe();
+    return () => {
+        subscription.unsubscribe();
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -212,7 +220,7 @@ export default function DialogTreeHome() {
         const urlParams = new URLSearchParams(window.location.search);
         const joinId = urlParams.get('workspace');
         const customName = urlParams.get('newWsName');
-        const wsName = customName || "My Workspace";
+        const wsName = customName || "Untitled Workspace"; // DEFAULT NAME
 
         const data = await api.init(session.user.id, wsName, joinId);
         if (data.error) throw new Error(data.error);
@@ -250,11 +258,9 @@ export default function DialogTreeHome() {
       setActiveArtifact(null); 
       setEditorErrors([]);
       try {
-        // 1. Load Messages
         const historyData = await api.getMessages(activeBranch.id);
         setMessages(historyData.messages || []);
         
-        // 2. Load Base Files
         const { data: fileData } = await supabase.from('files').select('*').eq('branch_id', activeBranch.id);
         if (fileData) setRepoFiles(fileData);
 
@@ -269,7 +275,6 @@ export default function DialogTreeHome() {
     if (!workspace) return;
     api.getChitchat(workspace.id).then(res => setChitchatMsgs(res.messages || []));
     
-    // Listen for real-time updates across the system
     const channel = supabase.channel('room_updates')
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
         if (activeBranch) api.getMessages(activeBranch.id).then(res => setMessages(res.messages || []));
@@ -314,10 +319,22 @@ export default function DialogTreeHome() {
   const handleLogout = async () => { await supabase.auth.signOut(); setWorkspace(null); setActiveBranch(null); setMessages([]); setRepoFiles([]); };
 
   const createNewWorkspace = () => {
-      const prefixes = ['Neon', 'Quantum', 'Cyber', 'Astro', 'Nova', 'Echo'];
-      const nouns = ['Nexus', 'Matrix', 'Forge', 'Node', 'Core', 'Base'];
-      const randomName = `${prefixes[Math.floor(Math.random()*prefixes.length)]} ${nouns[Math.floor(Math.random()*nouns.length)]}`;
-      window.location.href = `/?newWsName=${encodeURIComponent(randomName)}`;
+      // Instantly creates "Untitled Workspace"
+      window.location.href = `/?newWsName=Untitled Workspace`;
+  };
+
+  // 🔥 NEW: INLINE SAVE RENAME
+  const saveWorkspaceRename = async (wsId: string) => {
+      if (!editWsName.trim()) { setEditingWsId(null); return; }
+      try {
+          await supabase.from('workspaces').update({ name: editWsName }).eq('id', wsId);
+          const updated = recentWorkspaces.map(w => w.id === wsId ? { ...w, name: editWsName } : w);
+          localStorage.setItem('recent_workspaces', JSON.stringify(updated));
+          setRecentWorkspaces(updated);
+          if (workspace?.id === wsId) setWorkspace({ ...workspace, name: editWsName });
+      } catch (err) {} finally {
+          setEditingWsId(null);
+      }
   };
 
   const deleteWorkspace = async (wsId: string, e: React.MouseEvent) => {
@@ -387,6 +404,14 @@ export default function DialogTreeHome() {
       handleSend(engineeredPrompt);
   };
 
+  // 🔥 NEW: DEPLOYMENT AUTO-HEALER TRIGGER
+  const executeAutoHealer = () => {
+      if (!activeBranch) return;
+      const engineeredPrompt = `The recent deployment of this branch to Vercel/Render failed.\n\nPlease analyze the code in this branch for any compilation, build, or syntax errors, explain what caused the crash, and provide the fully corrected files so I can push a fix.`;
+      setDeployStatus('idle');
+      handleSend(engineeredPrompt);
+  };
+
   const submitFork = async () => {
     if (!forkModal.name.trim() || !forkModal.messageId) return;
     setLoading(true); setForkModal(prev => ({ ...prev, isOpen: false })); 
@@ -436,6 +461,7 @@ export default function DialogTreeHome() {
     } catch(e: any) { alert(`Merge failed: ${e.message}`); } finally { setLoading(false); }
   };
 
+  // 🔥 UPDATED GITHUB PUSH (Triggers CI/CD Polling)
   const executeGithubPush = async () => {
       if (!githubRepo || !githubCommitMsg || !activeArtifact || !githubToken) {
           alert("Please fill in all repository and token fields!"); return;
@@ -449,9 +475,42 @@ export default function DialogTreeHome() {
           const res = await api.pushToGithub(githubRepo, activeBranch?.name || 'main', filesToSend, githubCommitMsg, githubToken);
           if (res.error) throw new Error(res.error);
           
-          alert(`Successfully pushed ${filesToSend.length} file(s) to GitHub!`);
+          alert(`Successfully pushed to GitHub! Vercel/Render build started.`);
           setGithubModalOpen(false);
           setGithubCommitMsg("");
+          
+          // 🔥 START POLLING CI/CD STATUS
+          setDeployStatus('building');
+          
+          // Poll GitHub API for Commit Statuses (Vercel posts here automatically)
+          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+          
+          let attempts = 0;
+          pollIntervalRef.current = setInterval(async () => {
+              attempts++;
+              if (attempts > 30) { // Timeout after 2.5 minutes
+                  clearInterval(pollIntervalRef.current as NodeJS.Timeout);
+                  setDeployStatus('idle');
+                  return;
+              }
+              
+              try {
+                  const statusRes = await fetch(`https://api.github.com/repos/${githubRepo}/commits/${activeBranch?.name || 'main'}/status`, {
+                      headers: { 'Authorization': `token ${githubToken}` }
+                  });
+                  const statusData = await statusRes.json();
+                  
+                  if (statusData.state === 'success') {
+                      setDeployStatus('success');
+                      clearInterval(pollIntervalRef.current as NodeJS.Timeout);
+                      setTimeout(() => setDeployStatus('idle'), 5000);
+                  } else if (statusData.state === 'failure' || statusData.state === 'error') {
+                      setDeployStatus('error');
+                      clearInterval(pollIntervalRef.current as NodeJS.Timeout);
+                  }
+              } catch (err) {}
+          }, 5000);
+
       } catch (err: any) {
           alert("GitHub Push Failed.\n\nError: " + err.message);
       } finally {
@@ -488,7 +547,6 @@ export default function DialogTreeHome() {
       }
   };
 
-  // 🔥 NEW: SAVE DIRECTLY TO FILES TABLE
   const executeGithubImportFiles = async () => {
       if (!activeBranch || selectedTreeFiles.size === 0) return;
       setGithubImporting(true);
@@ -497,27 +555,17 @@ export default function DialogTreeHome() {
           const res = await api.importGithubFiles(githubRepo, filesToFetch, githubToken);
           if (res.error) throw new Error(res.error);
           
-          // Construct the database rows
           const fileRows = res.files.map((f: any) => {
               const ext = f.path.split('.').pop() || 'text';
               let lang = ext === 'js' ? 'javascript' : ext === 'ts' ? 'typescript' : ext === 'tsx' ? 'tsx' : ext === 'py' ? 'python' : ext;
-              return {
-                  branch_id: activeBranch.id,
-                  filename: f.path,
-                  content: f.content,
-                  language: lang
-              };
+              return { branch_id: activeBranch.id, filename: f.path, content: f.content, language: lang };
           });
 
-          // Insert into the new Files table
           const { error: fileError } = await supabase.from('files').insert(fileRows);
           if (fileError) throw fileError;
 
-          // Insert a clean, tiny system message to notify the user
           await supabase.from('messages').insert({
-              branch_id: activeBranch.id,
-              role: 'system',
-              sender_type: 'system',
+              branch_id: activeBranch.id, role: 'system', sender_type: 'system',
               content: `✅ **Imported ${res.files.length} files from \`${githubRepo}\` into the Virtual File System.**`
           });
           
@@ -860,12 +908,29 @@ export default function DialogTreeHome() {
             <div className="space-y-1">
                 {recentWorkspaces.map(ws => (
                     <div key={ws.id} className="relative flex items-center group">
-                        <a href={`/?workspace=${ws.id}`} className={`flex-1 flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors ${workspace?.id === ws.id ? 'bg-indigo-900/30 text-indigo-400' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'}`}>
-                            <div className="flex items-center gap-2 truncate pr-2">
-                                <Folder size={14} className="shrink-0"/>
-                                <span className="truncate">{ws.name}</span>
+                        
+                        {/* 🔥 INLINE EDITING LOGIC */}
+                        {editingWsId === ws.id ? (
+                            <div className="flex-1 flex items-center px-2 py-1.5 rounded-md bg-zinc-800 border border-zinc-700">
+                                <input 
+                                    type="text" 
+                                    autoFocus 
+                                    value={editWsName} 
+                                    onChange={(e) => setEditWsName(e.target.value)} 
+                                    onBlur={() => saveWorkspaceRename(ws.id)}
+                                    onKeyDown={(e) => { if (e.key === 'Enter') saveWorkspaceRename(ws.id); }}
+                                    className="bg-transparent text-sm text-zinc-200 focus:outline-none w-full"
+                                />
                             </div>
-                        </a>
+                        ) : (
+                            <a href={`/?workspace=${ws.id}`} onDoubleClick={(e) => { e.preventDefault(); setEditingWsId(ws.id); setEditWsName(ws.name); }} className={`flex-1 flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors ${workspace?.id === ws.id ? 'bg-indigo-900/30 text-indigo-400' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'}`}>
+                                <div className="flex items-center gap-2 truncate pr-2">
+                                    <Folder size={14} className="shrink-0"/>
+                                    <span className="truncate">{ws.name}</span>
+                                </div>
+                            </a>
+                        )}
+
                         <button onClick={(e) => deleteWorkspace(ws.id, e)} className="absolute right-2 p-1.5 bg-zinc-950/80 rounded-md text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity z-10" title="Delete Workspace">
                             <Trash size={14} />
                         </button>
@@ -910,7 +975,24 @@ export default function DialogTreeHome() {
           </div>
           <div className="flex items-center gap-3">
             
-            <div className="relative">
+            {/* 🔥 NEW: DEPLOYMENT STATUS UI */}
+            {deployStatus === 'building' && (
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-semibold animate-pulse">
+                    <Loader2 size={14} className="animate-spin" /> Building CI/CD...
+                </div>
+            )}
+            {deployStatus === 'success' && (
+                <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-xs font-semibold">
+                    <CheckCircle2 size={14} /> Deploy Success
+                </div>
+            )}
+            {deployStatus === 'error' && (
+                <button onClick={executeAutoHealer} className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-red-500 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs font-bold transition-all shadow-[0_0_15px_rgba(239,68,68,0.4)] animate-bounce">
+                    <AlertTriangle size={14} /> Deploy Failed - Auto Fix
+                </button>
+            )}
+
+            <div className="relative ml-2">
                <button onClick={() => setExportMenuOpen(!exportMenuOpen)} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-700 text-zinc-300 hover:bg-zinc-900 transition-all text-xs font-medium" title="Export this timeline">
                   <Cloud size={14} /> Export <ChevronDown size={12} className={`transition-transform ${exportMenuOpen ? 'rotate-180' : ''}`}/>
                </button>
@@ -996,7 +1078,6 @@ export default function DialogTreeHome() {
         </div>
       </main>
 
-      {/* ARTIFACT LIBRARY SIDEBAR */}
       {isArtifactSidebarOpen && (
          <aside className="w-72 border-l border-zinc-800 bg-zinc-950/90 backdrop-blur-md flex flex-col shadow-2xl z-20 shrink-0">
             <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-4 bg-zinc-900/50">
@@ -1044,7 +1125,7 @@ export default function DialogTreeHome() {
                 <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900 shrink-0">
                     <div className="flex items-center gap-4 overflow-hidden pr-4">
                         <Code size={18} className="text-indigo-400 shrink-0"/>
-                        <span className="text-sm font-semibold text-zinc-200 truncate">{activeArtifact.filename}</span>
+                        <span className="text-sm font-semibold text-zinc-200 truncate" title={activeArtifact.filename}>{activeArtifact.filename.split('/').pop()}</span>
                         
                         <div className="flex bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 ml-4 shrink-0">
                             <button onClick={() => setEditorTab('code')} className={`px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors ${editorTab === 'code' ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Code</button>
