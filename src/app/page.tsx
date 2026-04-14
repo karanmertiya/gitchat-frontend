@@ -86,19 +86,15 @@ export default function DialogTreeHome() {
       return html;
   };
 
-  // 🔥 ADVANCED MONACO INTEGRATION (Auto-Fix Bugs)
   const handleEditorDidMount = (editor: any, monacoInstance: any) => {
-      // 1. Listen for Highlights for Copilot
       editor.onDidChangeCursorSelection((e: any) => {
           const selection = editor.getModel().getValueInRange(e.selection);
           if (selection.trim().length > 0) setEditorSelection(selection);
           else setEditorSelection("");
       });
 
-      // 2. Listen for Syntax Errors! (The Bug Squasher)
       monacoInstance.editor.onDidChangeMarkers(() => {
           const markers = monacoInstance.editor.getModelMarkers({ resource: editor.getModel().uri });
-          // Filter for actual errors (severity 8)
           const errors = markers.filter((m: any) => m.severity === 8);
           setEditorErrors(errors);
       });
@@ -252,7 +248,6 @@ export default function DialogTreeHome() {
     setSelectedFiles([]); 
     setLoading(true);
 
-    // Smart @ Mention System
     const mentions = finalPrompt.match(/@([\w.-]+\.\w+)/g);
     if (mentions) {
         mentions.forEach(mention => {
@@ -365,23 +360,35 @@ export default function DialogTreeHome() {
       }
   };
 
-  // 🔥 NEW: EXECUTE REPO IMPORT
+  // 🔥 NEW: SILENT INJECT IMPORT
   const executeGithubImport = async () => {
       if (!githubRepo || !activeBranch) return;
       setGithubImporting(true);
       try {
-          // This calls the backend to hit GitHub API, download tree, and return files
           const res = await api.pullFromGithub(githubRepo, githubToken);
           if (res.error) throw new Error(res.error);
           
-          // Construct a giant prompt to feed the files into the AI context seamlessly
-          let importPrompt = `I am importing the repository **${githubRepo}**. Here are the current files:\n\n`;
+          // Construct a highly formatted System message
+          let systemContent = `✅ **Imported ${res.files.length} files from \`${githubRepo}\`**\n\n`;
+          
           res.files.forEach((f: any) => {
-              importPrompt += `### File: \`${f.path}\`\n\`\`\`text\n${f.content}\n\`\`\`\n\n`;
+              const ext = f.path.split('.').pop() || 'text';
+              let lang = ext === 'js' ? 'javascript' : ext === 'ts' ? 'typescript' : ext === 'tsx' ? 'tsx' : ext === 'py' ? 'python' : ext;
+              
+              systemContent += `\`\`\`${lang} filename="${f.path}"\n${f.content}\n\`\`\`\n\n`;
           });
           
+          // 🔥 MAGIC: Write directly to the DB. Supabase Realtime updates the UI instantly,
+          // and the AI never gets triggered to hallucinate!
+          const { error } = await supabase.from('messages').insert({
+              branch_id: activeBranch.id,
+              role: 'system',
+              content: systemContent
+          });
+
+          if (error) throw error;
+          
           setImportModalOpen(false);
-          handleSend(importPrompt); // Send silently to AI to seed the workspace
       } catch (err: any) {
           alert("Import Failed.\n\nError: " + err.message);
       } finally {
@@ -513,7 +520,6 @@ export default function DialogTreeHome() {
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans relative overflow-hidden">
       
-      {/* FLOATING MULTIPLAYER CHITCHAT */}
       <div className="absolute bottom-6 right-6 z-50">
          {isChitchatOpen ? (
             <div className="bg-zinc-900 border border-zinc-700 rounded-2xl w-80 shadow-2xl flex flex-col h-[450px] overflow-hidden">
@@ -563,7 +569,7 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* 🔥 REPO IMPORT MODAL */}
+      {/* REPO IMPORT MODAL */}
       {importModalOpen && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
@@ -666,7 +672,6 @@ export default function DialogTreeHome() {
             <div className="text-xs font-semibold text-zinc-500 mb-2 px-2 uppercase tracking-wider flex justify-between items-center">
                 Workspaces
                 <div className="flex gap-2">
-                    {/* 🔥 IMPORT REPO BUTTON IN SIDEBAR */}
                     <button onClick={() => setImportModalOpen(true)} className="hover:text-emerald-400 transition-colors" title="Import from GitHub"><Import size={14}/></button>
                     <button onClick={createNewWorkspace} className="hover:text-indigo-400 transition-colors" title="New Workspace"><Plus size={14}/></button>
                 </div>
@@ -858,7 +863,6 @@ export default function DialogTreeHome() {
                             <button onClick={() => setEditorTab('preview')} className={`flex items-center gap-1 px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors ${editorTab === 'preview' ? 'bg-emerald-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}><Play size={12}/> Preview</button>
                         </div>
 
-                        {/* 🔥 BUG SQUASHER BUTTON (Only shows if Monaco detects an error!) */}
                         {editorErrors.length > 0 && editorTab === 'code' && (
                             <button onClick={handleAutoFix} className="ml-4 flex items-center gap-1.5 px-3 py-1 bg-red-900/30 border border-red-700 hover:bg-red-900/50 text-red-400 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors animate-pulse">
                                 <Bug size={12}/> Fix {editorErrors.length} Bug{editorErrors.length > 1 ? 's' : ''}
@@ -873,7 +877,6 @@ export default function DialogTreeHome() {
                 </div>
                 
                 <div className="flex-1 overflow-hidden relative">
-                    {/* The Code Editor */}
                     <div className={`absolute inset-0 pt-4 transition-opacity ${editorTab === 'code' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
                         <Editor
                             height="100%"
@@ -885,7 +888,6 @@ export default function DialogTreeHome() {
                             options={{ minimap: { enabled: false }, fontSize: 13, wordWrap: 'on', padding: { top: 16 }, scrollBeyondLastLine: false, smoothScrolling: true }}
                         />
                         
-                        {/* 🔥 FLOATING COPILOT EDITOR */}
                         {editorSelection && (
                             <div className="absolute bottom-6 right-6 z-50 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl p-4 w-80 animate-in fade-in slide-in-from-bottom-4">
                                 <div className="text-xs font-bold text-indigo-400 mb-3 flex items-center gap-1"><Sparkles size={14}/> Copilot: Edit Selection</div>
@@ -905,7 +907,6 @@ export default function DialogTreeHome() {
                         )}
                     </div>
                     
-                    {/* The Live Web Preview */}
                     <div className={`absolute inset-0 bg-white transition-opacity ${editorTab === 'preview' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
                         <iframe 
                             title="live-preview"
