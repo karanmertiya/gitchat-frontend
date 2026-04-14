@@ -1071,7 +1071,7 @@ export default function DialogTreeHome() {
             </div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
                {allArtifacts.length > 0 && (
-                   <button onClick={() => downloadAllArtifacts(allArtifacts, activeBranch?.name)} className="w-full bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-600/30 text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all mb-4">
+                   <button onClick={() => downloadAllArtifacts(allArtifacts, activeBranch?.name || 'export')} className="w-full bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-600/30 text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all mb-4">
                        <Cloud size={14} /> Download All as ZIP
                    </button>
                )}
