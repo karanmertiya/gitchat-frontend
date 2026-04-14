@@ -238,6 +238,32 @@ export default function DialogTreeHome() {
       if (name) { window.location.href = `/?newWsName=${encodeURIComponent(name)}`; }
   };
 
+  // 🔥 NEW: DELETE WORKSPACE FUNCTION
+  const deleteWorkspace = async (wsId: string, e: React.MouseEvent) => {
+      e.stopPropagation();
+      e.preventDefault();
+      
+      if (!window.confirm("Are you sure you want to permanently delete this workspace and all its branches/messages?")) return;
+      
+      try {
+          // 1. Delete entirely from database (cascades down to branches and messages)
+          const { error } = await supabase.from('workspaces').delete().eq('id', wsId);
+          if (error) throw error;
+
+          // 2. Remove from Local Storage and State
+          const updated = recentWorkspaces.filter(w => w.id !== wsId);
+          localStorage.setItem('recent_workspaces', JSON.stringify(updated));
+          setRecentWorkspaces(updated);
+
+          // 3. If they deleted the workspace they are currently looking at, reload to clean slate
+          if (workspace?.id === wsId) {
+              window.location.href = '/';
+          }
+      } catch (err: any) {
+          alert(`Failed to delete workspace: ${err.message}`);
+      }
+  };
+
   const handleSend = async (overridePrompt?: string) => {
     const finalPrompt = (overridePrompt || input).trim();
     if (!finalPrompt && selectedFiles.length === 0) return;
@@ -360,7 +386,6 @@ export default function DialogTreeHome() {
       }
   };
 
-  // 🔥 NEW: SILENT INJECT IMPORT
   const executeGithubImport = async () => {
       if (!githubRepo || !activeBranch) return;
       setGithubImporting(true);
@@ -368,18 +393,14 @@ export default function DialogTreeHome() {
           const res = await api.pullFromGithub(githubRepo, githubToken);
           if (res.error) throw new Error(res.error);
           
-          // Construct a highly formatted System message
           let systemContent = `✅ **Imported ${res.files.length} files from \`${githubRepo}\`**\n\n`;
           
           res.files.forEach((f: any) => {
               const ext = f.path.split('.').pop() || 'text';
               let lang = ext === 'js' ? 'javascript' : ext === 'ts' ? 'typescript' : ext === 'tsx' ? 'tsx' : ext === 'py' ? 'python' : ext;
-              
               systemContent += `\`\`\`${lang} filename="${f.path}"\n${f.content}\n\`\`\`\n\n`;
           });
           
-          // 🔥 MAGIC: Write directly to the DB. Supabase Realtime updates the UI instantly,
-          // and the AI never gets triggered to hallucinate!
           const { error } = await supabase.from('messages').insert({
               branch_id: activeBranch.id,
               role: 'system',
@@ -387,7 +408,6 @@ export default function DialogTreeHome() {
           });
 
           if (error) throw error;
-          
           setImportModalOpen(false);
       } catch (err: any) {
           alert("Import Failed.\n\nError: " + err.message);
@@ -678,10 +698,18 @@ export default function DialogTreeHome() {
             </div>
             <div className="space-y-1">
                 {recentWorkspaces.map(ws => (
-                    <a key={ws.id} href={`/?workspace=${ws.id}`} className={`flex items-center gap-2 px-3 py-2 rounded-md text-sm font-medium transition-colors ${workspace?.id === ws.id ? 'bg-indigo-900/30 text-indigo-400' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'}`}>
-                        <Folder size={14} className="shrink-0"/>
-                        <span className="truncate">{ws.name}</span>
-                    </a>
+                    <div key={ws.id} className="relative flex items-center group">
+                        <a href={`/?workspace=${ws.id}`} className={`flex-1 flex items-center justify-between px-3 py-2 rounded-md text-sm font-medium transition-colors ${workspace?.id === ws.id ? 'bg-indigo-900/30 text-indigo-400' : 'text-zinc-400 hover:bg-zinc-900 hover:text-zinc-200'}`}>
+                            <div className="flex items-center gap-2 truncate pr-2">
+                                <Folder size={14} className="shrink-0"/>
+                                <span className="truncate">{ws.name}</span>
+                            </div>
+                        </a>
+                        {/* 🔥 DELETE WORKSPACE BUTTON */}
+                        <button onClick={(e) => deleteWorkspace(ws.id, e)} className="absolute right-2 p-1.5 bg-zinc-950/80 rounded-md text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity z-10" title="Delete Workspace">
+                            <Trash size={14} />
+                        </button>
+                    </div>
                 ))}
             </div>
           </div>
