@@ -404,6 +404,7 @@ export default function DialogTreeHome() {
           const { error } = await supabase.from('messages').insert({
               branch_id: activeBranch.id,
               role: 'system',
+              sender_type: 'system', 
               content: systemContent
           });
 
