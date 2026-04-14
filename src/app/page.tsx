@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, CheckSquare } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, ChevronRight } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -13,6 +13,79 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
 import { getBranchDepth, downloadCode, downloadAllArtifacts, extractAllArtifacts, exportMD, exportPDF } from '@/lib/dialogUtils';
 import MergeRequestModal from '@/components/MergeRequestModal';
+
+// 🔥 NEW: RECURSIVE FOLDER COMPONENT FOR GITHUB IMPORT
+const FolderTreeItem = ({ node, path, selectedFiles, toggleFile, toggleFolder }: any) => {
+    const [isOpen, setIsOpen] = useState(true);
+    
+    // Check if this node is a file (it has no children objects, or has a special marker)
+    if (node._isFile) {
+        return (
+            <label className="flex items-center gap-3 text-sm text-zinc-300 hover:bg-zinc-900 p-1.5 rounded cursor-pointer transition-colors ml-4">
+                <input 
+                    type="checkbox" 
+                    checked={selectedFiles.has(path)} 
+                    onChange={() => toggleFile(path)} 
+                    className="rounded bg-zinc-900 border-zinc-700 text-emerald-600 focus:ring-emerald-600 w-4 h-4" 
+                />
+                <File size={14} className="text-zinc-500" />
+                <span className="truncate font-mono text-[13px]">{path.split('/').pop()}</span>
+            </label>
+        );
+    }
+
+    // It's a folder
+    const folderName = path ? path.split('/').pop() : 'Root';
+    const childrenKeys = Object.keys(node).filter(k => k !== '_isFile');
+    
+    // Check if all files inside this folder are selected
+    const allNestedFiles = childrenKeys.flatMap(k => {
+        const childPath = path ? `${path}/${k}` : k;
+        const extractFiles = (n: any, p: string): string[] => {
+            if (n._isFile) return [p];
+            return Object.keys(n).filter(childK => childK !== '_isFile').flatMap(childK => extractFiles(n[childK], `${p}/${childK}`));
+        };
+        return extractFiles(node[k], childPath);
+    });
+    
+    const isAllSelected = allNestedFiles.length > 0 && allNestedFiles.every(f => selectedFiles.has(f));
+    const isSomeSelected = allNestedFiles.some(f => selectedFiles.has(f));
+
+    return (
+        <div className="ml-4 mt-1">
+            <div className="flex items-center gap-2 text-sm text-zinc-200 hover:bg-zinc-800 p-1.5 rounded cursor-pointer transition-colors" onClick={() => setIsOpen(!isOpen)}>
+                <div onClick={(e) => { e.stopPropagation(); toggleFolder(allNestedFiles, !isAllSelected); }}>
+                    <input 
+                        type="checkbox" 
+                        checked={isAllSelected}
+                        ref={input => { if (input) input.indeterminate = isSomeSelected && !isAllSelected; }}
+                        onChange={() => {}} 
+                        className="rounded bg-zinc-900 border-zinc-700 text-emerald-600 focus:ring-emerald-600 w-4 h-4 cursor-pointer" 
+                    />
+                </div>
+                <div className="flex items-center gap-1.5 flex-1">
+                    <ChevronRight size={14} className={`transition-transform text-zinc-500 ${isOpen ? 'rotate-90' : ''}`} />
+                    <Folder size={14} className="text-indigo-400" />
+                    <span className="font-semibold text-[13px]">{folderName}</span>
+                </div>
+            </div>
+            {isOpen && (
+                <div className="border-l border-zinc-800 ml-2.5">
+                    {childrenKeys.map(key => (
+                        <FolderTreeItem 
+                            key={key} 
+                            node={node[key]} 
+                            path={path ? `${path}/${key}` : key} 
+                            selectedFiles={selectedFiles} 
+                            toggleFile={toggleFile} 
+                            toggleFolder={toggleFolder} 
+                        />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+};
 
 export default function DialogTreeHome() {
   const monaco = useMonaco();
@@ -55,10 +128,11 @@ export default function DialogTreeHome() {
   const [githubPushAll, setGithubPushAll] = useState(true); 
   const [githubPushing, setGithubPushing] = useState(false);
 
-  // 🔥 NEW IMPORT STATE
+  // IMPORT STATE
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [importStep, setImportStep] = useState<'input' | 'select'>('input');
   const [repoTree, setRepoTree] = useState<any[]>([]);
+  const [folderStructure, setFolderStructure] = useState<any>({});
   const [selectedTreeFiles, setSelectedTreeFiles] = useState<Set<string>>(new Set());
   const [githubImporting, setGithubImporting] = useState(false);
 
@@ -288,10 +362,15 @@ export default function DialogTreeHome() {
     if (currentAttachments.length > 0) {
        displayPrompt += `\n\n*(Uploaded ${currentAttachments.length} Context Artifacts)*`;
     }
+
+    // 🔥 SMART CONTEXT FILTER
+    // We strip out the massive silent import blocks from the history so we don't blow up the AI's token limit!
+    const safeHistory = messages.filter(m => !(m.role === 'system' && m.content.includes('✅ **Imported')));
+
     setMessages(prev => [...prev, { role: 'user', content: displayPrompt, id: 'temp' }]);
 
     try {
-      const data = await api.chat(activeBranch.id, finalPrompt, lastMsgId, messages, currentAttachments);
+      const data = await api.chat(activeBranch.id, finalPrompt, lastMsgId, safeHistory, currentAttachments);
       if (data.error) throw new Error(data.error);
     } catch (err: any) {
       setMessages(prev => prev.filter(m => m.id !== 'temp'));
@@ -379,15 +458,29 @@ export default function DialogTreeHome() {
       }
   };
 
-  // 🔥 NEW: GET TREE FOR SELECTION
+  // 🔥 FOLDER STRUCTURE BUILDER
   const executeGithubFetchTree = async () => {
       if (!githubRepo) return;
       setGithubImporting(true);
       try {
           const res = await api.getGithubTree(githubRepo, githubToken);
           if (res.error) throw new Error(res.error);
+          
           setRepoTree(res.tree);
           setSelectedTreeFiles(new Set(res.tree.map((f: any) => f.path)));
+
+          // Convert flat paths to nested folder object
+          const root: any = {};
+          res.tree.forEach((file: any) => {
+              const parts = file.path.split('/');
+              let current = root;
+              parts.forEach((part: string, i: number) => {
+                  if (!current[part]) current[part] = i === parts.length - 1 ? { _isFile: true } : {};
+                  current = current[part];
+              });
+          });
+          
+          setFolderStructure(root);
           setImportStep('select');
       } catch (err: any) {
           alert("Failed to fetch repo structure.\n\nError: " + err.message);
@@ -396,7 +489,6 @@ export default function DialogTreeHome() {
       }
   };
 
-  // 🔥 NEW: IMPORT SELECTED FILES
   const executeGithubImportFiles = async () => {
       if (!activeBranch || selectedTreeFiles.size === 0) return;
       setGithubImporting(true);
@@ -429,6 +521,19 @@ export default function DialogTreeHome() {
       } finally {
           setGithubImporting(false);
       }
+  };
+
+  const toggleFileSelection = (path: string) => {
+      const newSet = new Set(selectedTreeFiles);
+      if (newSet.has(path)) newSet.delete(path);
+      else newSet.add(path);
+      setSelectedTreeFiles(newSet);
+  };
+
+  const toggleFolderSelection = (paths: string[], forceAdd: boolean) => {
+      const newSet = new Set(selectedTreeFiles);
+      paths.forEach(p => forceAdd ? newSet.add(p) : newSet.delete(p));
+      setSelectedTreeFiles(newSet);
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -604,7 +709,7 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* 🔥 UPDATED REPO IMPORT MODAL WITH CHECKBOXES */}
+      {/* 🔥 FOLDER TREE IMPORT MODAL */}
       {importModalOpen && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-2xl shadow-2xl">
@@ -638,26 +743,20 @@ export default function DialogTreeHome() {
                         <div className="flex justify-between items-center text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
                             <span>Select files to import ({selectedTreeFiles.size} selected)</span>
                             <div className="flex gap-3">
-                                <button onClick={() => setSelectedTreeFiles(new Set(repoTree.map(f => f.path)))} className="hover:text-emerald-400">Select All</button>
-                                <button onClick={() => setSelectedTreeFiles(new Set())} className="hover:text-zinc-200">Clear</button>
+                                <button onClick={() => setSelectedTreeFiles(new Set(repoTree.map(f => f.path)))} className="hover:text-emerald-400 transition-colors">Select All</button>
+                                <button onClick={() => setSelectedTreeFiles(new Set())} className="hover:text-zinc-200 transition-colors">Clear</button>
                             </div>
                         </div>
-                        <div className="max-h-80 overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-lg p-2 space-y-1">
-                            {repoTree.map(file => (
-                               <label key={file.path} className="flex items-center gap-3 text-sm text-zinc-300 hover:bg-zinc-900 p-1.5 rounded cursor-pointer transition-colors">
-                                  <input 
-                                      type="checkbox" 
-                                      checked={selectedTreeFiles.has(file.path)} 
-                                      onChange={(e) => {
-                                         const newSet = new Set(selectedTreeFiles);
-                                         if (e.target.checked) newSet.add(file.path);
-                                         else newSet.delete(file.path);
-                                         setSelectedTreeFiles(newSet);
-                                      }} 
-                                      className="rounded bg-zinc-900 border-zinc-700 text-emerald-600 focus:ring-emerald-600 w-4 h-4" 
-                                  />
-                                  <span className="truncate font-mono text-[13px]">{file.path}</span>
-                               </label>
+                        <div className="max-h-80 overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-lg p-2">
+                            {Object.keys(folderStructure).map(key => (
+                                <FolderTreeItem 
+                                    key={key} 
+                                    node={folderStructure[key]} 
+                                    path={key} 
+                                    selectedFiles={selectedTreeFiles} 
+                                    toggleFile={toggleFileSelection} 
+                                    toggleFolder={toggleFolderSelection} 
+                                />
                             ))}
                         </div>
                     </div>
