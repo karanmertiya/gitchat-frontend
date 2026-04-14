@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, ChevronRight, AlertTriangle, CheckCircle2, RotateCcw, Settings } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, AlertTriangle, CheckCircle2, RotateCcw, Settings } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -13,56 +13,9 @@ import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { getBranchDepth, downloadCode, downloadAllArtifacts, extractAllArtifacts, exportMD, exportPDF } from '@/lib/dialogUtils';
 import MergeRequestModal from '@/components/MergeRequestModal';
 
-const FolderTreeItem = ({ node, path, selectedFiles, toggleFile, toggleFolder }: any) => {
-    const [isOpen, setIsOpen] = useState(true);
-    
-    if (node._isFile) {
-        return (
-            <label className="flex items-center gap-3 text-sm text-zinc-300 hover:bg-zinc-800/80 p-1.5 rounded cursor-pointer transition-colors ml-4 border border-transparent hover:border-zinc-800">
-                <input type="checkbox" checked={selectedFiles.has(path)} onChange={() => toggleFile(path)} className="rounded bg-zinc-900 border-zinc-700 text-emerald-600 focus:ring-emerald-600 w-4 h-4 cursor-pointer" />
-                <File size={14} className="text-zinc-500 shrink-0" />
-                <span className="truncate font-mono text-[13px]">{path.split('/').pop()}</span>
-            </label>
-        );
-    }
-
-    const folderName = path ? path.split('/').pop() : 'Root';
-    const childrenKeys = Object.keys(node).filter(k => k !== '_isFile');
-    
-    const allNestedFiles = childrenKeys.flatMap(k => {
-        const childPath = path ? `${path}/${k}` : k;
-        const extractFiles = (n: any, p: string): string[] => {
-            if (n._isFile) return [p];
-            return Object.keys(n).filter(childK => childK !== '_isFile').flatMap(childK => extractFiles(n[childK], `${p}/${childK}`));
-        };
-        return extractFiles(node[k], childPath);
-    });
-    
-    const isAllSelected = allNestedFiles.length > 0 && allNestedFiles.every(f => selectedFiles.has(f));
-    const isSomeSelected = allNestedFiles.some(f => selectedFiles.has(f));
-
-    return (
-        <div className="ml-4 mt-1">
-            <div className="flex items-center gap-2 text-sm text-zinc-200 hover:bg-zinc-800/50 p-1.5 rounded transition-colors group">
-                <div onClick={(e) => { e.stopPropagation(); toggleFolder(allNestedFiles, !isAllSelected); }} className="cursor-pointer flex items-center justify-center w-5 h-5">
-                    <input type="checkbox" checked={isAllSelected} ref={input => { if (input) input.indeterminate = isSomeSelected && !isAllSelected; }} onChange={() => {}} className="rounded bg-zinc-900 border-zinc-700 text-emerald-600 focus:ring-emerald-600 w-4 h-4 cursor-pointer" />
-                </div>
-                <div className="flex items-center gap-1.5 flex-1 cursor-pointer" onClick={() => setIsOpen(!isOpen)}>
-                    <ChevronRight size={14} className={`transition-transform text-zinc-500 group-hover:text-zinc-300 ${isOpen ? 'rotate-90' : ''}`} />
-                    <Folder size={14} className="text-indigo-400 shrink-0" />
-                    <span className="font-semibold text-[13px] select-none">{folderName}</span>
-                </div>
-            </div>
-            {isOpen && (
-                <div className="border-l border-zinc-800/50 ml-2.5 mt-1 space-y-0.5">
-                    {childrenKeys.map(key => (
-                        <FolderTreeItem key={key} node={node[key]} path={path ? `${path}/${key}` : key} selectedFiles={selectedFiles} toggleFile={toggleFile} toggleFolder={toggleFolder} />
-                    ))}
-                </div>
-            )}
-        </div>
-    );
-};
+// 🔥 IMPORT OUR NEW CLEAN COMPONENTS
+import FolderTreeItem from '@/components/FolderTree';
+import PreviewEngine from '@/components/PreviewEngine';
 
 export default function DialogTreeHome() {
   const monaco = useMonaco();
@@ -109,7 +62,6 @@ export default function DialogTreeHome() {
   const [githubPushAll, setGithubPushAll] = useState(true); 
   const [githubPushing, setGithubPushing] = useState(false);
 
-  // 🔥 NEW: VERCEL PAT STATE FOR AUTO-HEALER
   const [deploySettingsOpen, setDeploySettingsOpen] = useState(false);
   const [vercelToken, setVercelToken] = useState("");
   const [vercelProjectId, setVercelProjectId] = useState("");
@@ -146,75 +98,13 @@ export default function DialogTreeHome() {
       else allArtifacts.push(art); 
   });
 
-  // 🔥 UPDATED: PYODIDE WEBASSEMBLY ENGINE FOR PYTHON!
-  const getPreviewHtml = () => {
-      if (!activeArtifact) return '';
-
-      // PYTHON PREVIEW (WebAssembly)
-      if (activeArtifact.lang === 'python' || activeArtifact.filename.endsWith('.py')) {
-          return `
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <script src="https://cdn.jsdelivr.net/pyodide/v0.24.1/full/pyodide.js"></script>
-                <style>
-                    body { background: #0d1117; color: #c9d1d9; font-family: monospace; padding: 1.5rem; margin: 0; line-height: 1.6; }
-                    .header { color: #58a6ff; font-weight: bold; margin-bottom: 1rem; border-bottom: 1px solid #30363d; padding-bottom: 0.5rem; }
-                    #output { white-space: pre-wrap; font-size: 14px; }
-                    .error { color: #ff7b72; }
-                    .loader { display: inline-block; width: 12px; height: 12px; border: 2px solid #58a6ff; border-radius: 50%; border-top-color: transparent; animation: spin 1s linear infinite; margin-right: 8px; vertical-align: middle; }
-                    @keyframes spin { 100% { transform: rotate(360deg); } }
-                </style>
-            </head>
-            <body>
-                <div class="header" id="status"><span class="loader"></span>Initializing Python WebAssembly Engine...</div>
-                <div id="output"></div>
-                <script>
-                    async function main() {
-                        const status = document.getElementById("status");
-                        const output = document.getElementById("output");
-                        try {
-                            let pyodide = await loadPyodide();
-                            status.innerHTML = "✅ Execution Output";
-                            
-                            pyodide.runPython(\`
-                                import sys
-                                import io
-                                sys.stdout = io.StringIO()
-                            \`);
-
-                            const pythonCode = \`${activeArtifact.code.replace(/\\/g, '\\\\').replace(/`/g, '\\`').replace(/\$/g, '\\$')}\`;
-                            await pyodide.runPythonAsync(pythonCode);
-                            
-                            let stdout = pyodide.runPython("sys.stdout.getvalue()");
-                            output.innerText = stdout || "(No print output)";
-                        } catch (err) {
-                            status.innerHTML = "❌ Execution Error";
-                            output.innerHTML = "<span class='error'>" + err + "</span>";
-                        }
-                    }
-                    main();
-                </script>
-            </body>
-            </html>
-          `;
-      }
-
-      // STANDARD HTML/JS/CSS PREVIEW
-      let html = allArtifacts.find(a => a.lang === 'html' || a.filename.endsWith('.html'))?.code || '<div style="color:black; font-family:sans-serif; padding: 20px;"><h2>HTML required</h2><p>Ask the AI to generate HTML to view the live webpage.</p></div>';
-      const css = allArtifacts.find(a => a.lang === 'css' || a.filename.endsWith('.css'))?.code || '';
-      const js = allArtifacts.find(a => a.lang.includes('js') || a.filename.endsWith('.js'))?.code || '';
-
-      if (html.includes('</head>')) html = html.replace('</head>', `<style>${css}</style></head>`);
-      else html = `<style>${css}</style>` + html;
-
-      if (html.includes('</body>')) html = html.replace('</body>', `<script>${js}</script></body>`);
-      else html = html + `<script>${js}</script>`;
-      
-      return html;
-  };
-
+  // 🔥 MONACO SMART FIX: Taught it to ignore fake React/Import errors
   const handleEditorDidMount = (editor: any, monacoInstance: any) => {
+      monacoInstance.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
+          noSemanticValidation: true,
+          noSyntaxValidation: false,
+      });
+
       editor.onDidChangeCursorSelection((e: any) => {
           const selection = editor.getModel().getValueInRange(e.selection);
           if (selection.trim().length > 0) setEditorSelection(selection);
@@ -411,7 +301,6 @@ export default function DialogTreeHome() {
   const handleOAuth = async (provider: 'google' | 'github') => { await supabase.auth.signInWithOAuth({ provider }); };
   const handleLogout = async () => { await supabase.auth.signOut(); setWorkspace(null); setActiveBranch(null); setMessages([]); setRepoFiles([]); };
 
-  // 🔥 FIX: Prevent strict mode duplication with random hash
   const createNewWorkspace = () => {
       const hash = Math.floor(1000 + Math.random() * 9000);
       window.location.href = `/?newWsName=Untitled Workspace ${hash}`;
@@ -517,17 +406,14 @@ export default function DialogTreeHome() {
       handleSend(engineeredPrompt);
   };
 
-  // 🔥 NEW: REAL VERCEL LOG FETCHER FOR AUTO-HEALER
   const executeAutoHealer = async () => {
       if (!activeBranch) return;
       setDeployStatus('idle');
 
       let engineeredPrompt = `The recent deployment of this branch failed.\n\nPlease analyze the code in this branch for any compilation, build, or syntax errors, explain what caused the crash, and provide the fully corrected files.`;
 
-      // If they provided a Vercel PAT, fetch the actual error logs!
       if (vercelToken && vercelProjectId) {
           try {
-              // 1. Get latest failed deployment for this project
               const depRes = await fetch(`https://api.vercel.com/v6/deployments?projectId=${vercelProjectId}&state=ERROR&limit=1`, {
                   headers: { 'Authorization': `Bearer ${vercelToken}` }
               });
@@ -536,13 +422,11 @@ export default function DialogTreeHome() {
               if (depData.deployments && depData.deployments.length > 0) {
                   const deploymentId = depData.deployments[0].uid;
                   
-                  // 2. Fetch the build logs for that deployment
                   const eventRes = await fetch(`https://api.vercel.com/v2/deployments/${deploymentId}/events`, {
                       headers: { 'Authorization': `Bearer ${vercelToken}` }
                   });
                   const eventData = await eventRes.json();
                   
-                  // Extract actual error strings
                   const errorLogs = eventData.filter((log: any) => log.type === 'error' || log.text.includes('Error')).map((l:any) => l.text).join('\n');
                   
                   if (errorLogs) {
@@ -1386,12 +1270,7 @@ export default function DialogTreeHome() {
                     </div>
                     
                     <div className={`absolute inset-0 bg-[#0d1117] transition-opacity ${editorTab === 'preview' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
-                        <iframe 
-                            title="live-preview"
-                            className="w-full h-full border-none"
-                            srcDoc={getPreviewHtml()}
-                            sandbox="allow-scripts allow-modals"
-                        />
+                        {editorTab === 'preview' && <PreviewEngine activeArtifact={activeArtifact} allArtifacts={allArtifacts} />}
                     </div>
                 </div>
             </aside>
