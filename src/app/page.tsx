@@ -436,7 +436,7 @@ export default function DialogTreeHome() {
   };
 
   const submitFork = async () => {
-    if (!forkModal.name.trim() || !forkModal.messageId) return;
+    if (!forkModal.name.trim() || !forkModal.messageId || !workspace) return; // 🔥 ADDED NULL CHECK
     setLoading(true); setForkModal(prev => ({ ...prev, isOpen: false })); 
     try { 
         await api.branch(workspace.id, forkModal.name, forkModal.isEphemeral, forkModal.messageId, activeBranch!.id); 
