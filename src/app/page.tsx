@@ -1,13 +1,13 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
 
 // Highlighters and Editor
-import Editor from "@monaco-editor/react";
+import Editor, { useMonaco } from "@monaco-editor/react";
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
 import { vscDarkPlus } from 'react-syntax-highlighter/dist/esm/styles/prism';
 
@@ -15,6 +15,7 @@ import { getBranchDepth, downloadCode, downloadAllArtifacts, extractAllArtifacts
 import MergeRequestModal from '@/components/MergeRequestModal';
 
 export default function DialogTreeHome() {
+  const monaco = useMonaco();
   const [session, setSession] = useState<any>(null);
   const [isInitializing, setIsInitializing] = useState(true);
   
@@ -41,17 +42,20 @@ export default function DialogTreeHome() {
   const [editorTab, setEditorTab] = useState<'code' | 'preview'>('code');
   const [editorWidth, setEditorWidth] = useState(45); 
   
-  // 🔥 NEW STATE: Inline Copilot
+  // Inline Copilot & Bug Squasher
   const [editorSelection, setEditorSelection] = useState("");
   const [copilotInput, setCopilotInput] = useState("");
+  const [editorErrors, setEditorErrors] = useState<any[]>([]);
 
   // GITHUB STATE
   const [githubModalOpen, setGithubModalOpen] = useState(false);
+  const [importModalOpen, setImportModalOpen] = useState(false);
   const [githubRepo, setGithubRepo] = useState("");
   const [githubCommitMsg, setGithubCommitMsg] = useState("");
   const [githubToken, setGithubToken] = useState("");
   const [githubPushAll, setGithubPushAll] = useState(true); 
   const [githubPushing, setGithubPushing] = useState(false);
+  const [githubImporting, setGithubImporting] = useState(false);
 
   const [isArtifactSidebarOpen, setIsArtifactSidebarOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
@@ -66,37 +70,45 @@ export default function DialogTreeHome() {
   const [isDiffLoading, setIsDiffLoading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-
   const timelineArtifacts = extractAllArtifacts(messages);
 
-  // 🔥 THE MAGIC BUNDLER (FIXED)
   const getPreviewHtml = () => {
       let html = timelineArtifacts.find(a => a.lang === 'html' || a.filename.endsWith('.html'))?.code || '<div style="color:black; font-family:sans-serif; text-align:center; margin-top: 50px;"><h2>No HTML file found</h2><p>Ask the AI to generate an index.html file to see the preview!</p></div>';
       const css = timelineArtifacts.find(a => a.lang === 'css' || a.filename.endsWith('.css'))?.code || '';
       const js = timelineArtifacts.find(a => a.lang.includes('js') || a.filename.endsWith('.js'))?.code || '';
 
-      // Smartly inject CSS into the head and JS into the body so it actually runs!
-      if (html.includes('</head>')) {
-          html = html.replace('</head>', `<style>${css}</style></head>`);
-      } else {
-          html = `<style>${css}</style>` + html;
-      }
+      if (html.includes('</head>')) html = html.replace('</head>', `<style>${css}</style></head>`);
+      else html = `<style>${css}</style>` + html;
 
-      if (html.includes('</body>')) {
-          html = html.replace('</body>', `<script>${js}</script></body>`);
-      } else {
-          html = html + `<script>${js}</script>`;
-      }
+      if (html.includes('</body>')) html = html.replace('</body>', `<script>${js}</script></body>`);
+      else html = html + `<script>${js}</script>`;
+      
       return html;
   };
 
-  // 🔥 GET HIGHLIGHTED TEXT IN EDITOR
-  const handleEditorDidMount = (editor: any) => {
+  // 🔥 ADVANCED MONACO INTEGRATION (Auto-Fix Bugs)
+  const handleEditorDidMount = (editor: any, monacoInstance: any) => {
+      // 1. Listen for Highlights for Copilot
       editor.onDidChangeCursorSelection((e: any) => {
           const selection = editor.getModel().getValueInRange(e.selection);
           if (selection.trim().length > 0) setEditorSelection(selection);
           else setEditorSelection("");
       });
+
+      // 2. Listen for Syntax Errors! (The Bug Squasher)
+      monacoInstance.editor.onDidChangeMarkers(() => {
+          const markers = monacoInstance.editor.getModelMarkers({ resource: editor.getModel().uri });
+          // Filter for actual errors (severity 8)
+          const errors = markers.filter((m: any) => m.severity === 8);
+          setEditorErrors(errors);
+      });
+  };
+
+  const handleAutoFix = () => {
+      if (editorErrors.length === 0 || !activeArtifact) return;
+      const errorText = editorErrors.map(e => `Line ${e.startLineNumber}: ${e.message}`).join('\n');
+      const engineeredPrompt = `I have syntax errors in \`${activeArtifact.filename}\`.\n\nHere are the errors from my compiler:\n${errorText}\n\nPlease fix the code and give me the corrected file.`;
+      handleSend(engineeredPrompt);
   };
 
   const startResizing = useCallback((mouseDownEvent: React.MouseEvent) => {
@@ -174,6 +186,7 @@ export default function DialogTreeHome() {
       if (!activeBranch) return;
       setSwitching(true);
       setActiveArtifact(null); 
+      setEditorErrors([]);
       try {
         const historyData = await api.getMessages(activeBranch.id);
         setMessages(historyData.messages || []);
@@ -229,7 +242,6 @@ export default function DialogTreeHome() {
       if (name) { window.location.href = `/?newWsName=${encodeURIComponent(name)}`; }
   };
 
-  // 🔥 UPDATED CHAT FUNCTION (SMART @ MENTIONS & COPILOT OVERRIDE)
   const handleSend = async (overridePrompt?: string) => {
     const finalPrompt = (overridePrompt || input).trim();
     if (!finalPrompt && selectedFiles.length === 0) return;
@@ -240,15 +252,13 @@ export default function DialogTreeHome() {
     setSelectedFiles([]); 
     setLoading(true);
 
-    // ✨ SMART @ MENTION SYSTEM
-    // If user types @style.css, we grab the current code from the Virtual File System and attach it!
+    // Smart @ Mention System
     const mentions = finalPrompt.match(/@([\w.-]+\.\w+)/g);
     if (mentions) {
         mentions.forEach(mention => {
             const filename = mention.substring(1);
             const file = timelineArtifacts.find(a => a.filename === filename);
             if (file && !currentAttachments.find(a => a.name === filename)) {
-                // Secretly attach the file code base64 encoded
                 currentAttachments.push({
                     name: filename,
                     base64: `data:text/plain;base64,${btoa(unescape(encodeURIComponent(file.code)))}`,
@@ -275,7 +285,6 @@ export default function DialogTreeHome() {
     } finally { setLoading(false); }
   };
 
-  // 🔥 COPILOT INLINE EDITOR SUBMIT
   const handleCopilotSubmit = () => {
       if (!copilotInput.trim() || !activeArtifact || !editorSelection) return;
       const engineeredPrompt = `I need to modify \`${activeArtifact.filename}\`.\n\nPlease update this specific part of the code:\n\`\`\`${activeArtifact.lang}\n${editorSelection}\n\`\`\`\n\nInstructions: ${copilotInput}`;
@@ -353,6 +362,30 @@ export default function DialogTreeHome() {
           alert("GitHub Push Failed.\n\nError: " + err.message);
       } finally {
           setGithubPushing(false);
+      }
+  };
+
+  // 🔥 NEW: EXECUTE REPO IMPORT
+  const executeGithubImport = async () => {
+      if (!githubRepo || !activeBranch) return;
+      setGithubImporting(true);
+      try {
+          // This calls the backend to hit GitHub API, download tree, and return files
+          const res = await api.pullFromGithub(githubRepo, githubToken);
+          if (res.error) throw new Error(res.error);
+          
+          // Construct a giant prompt to feed the files into the AI context seamlessly
+          let importPrompt = `I am importing the repository **${githubRepo}**. Here are the current files:\n\n`;
+          res.files.forEach((f: any) => {
+              importPrompt += `### File: \`${f.path}\`\n\`\`\`text\n${f.content}\n\`\`\`\n\n`;
+          });
+          
+          setImportModalOpen(false);
+          handleSend(importPrompt); // Send silently to AI to seed the workspace
+      } catch (err: any) {
+          alert("Import Failed.\n\nError: " + err.message);
+      } finally {
+          setGithubImporting(false);
       }
   };
 
@@ -530,7 +563,34 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* 🔥 GITHUB PUSH MODAL (UPDATED UI) */}
+      {/* 🔥 REPO IMPORT MODAL */}
+      {importModalOpen && (
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-bold flex items-center gap-2"><Import size={20} className="text-emerald-400"/> Import Repository</h2>
+                <button onClick={() => setImportModalOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={20}/></button>
+            </div>
+            <div className="space-y-4 mb-6">
+                <div>
+                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Repository (owner/repo)</label>
+                    <input type="text" value={githubRepo} onChange={e => { setGithubRepo(e.target.value); localStorage.setItem('dialogtree_github_repo', e.target.value); }} placeholder="e.g. karanmertiya/dialogtree" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
+                </div>
+                <div>
+                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">GitHub Token (If Private)</label>
+                    <input type="password" value={githubToken} onChange={e => { setGithubToken(e.target.value); localStorage.setItem('dialogtree_github_token', e.target.value); }} placeholder="Optional for public repos..." className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
+                </div>
+            </div>
+            <div className="flex justify-end gap-3">
+                <button onClick={() => setImportModalOpen(false)} className="px-4 py-2 text-sm text-zinc-400">Cancel</button>
+                <button onClick={executeGithubImport} disabled={githubImporting || !githubRepo} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-semibold flex items-center gap-2">
+                    {githubImporting ? <Loader2 size={14} className="animate-spin"/> : <Import size={14}/>} Import Files
+                </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {githubModalOpen && activeArtifact && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
@@ -541,16 +601,7 @@ export default function DialogTreeHome() {
             <div className="space-y-4 mb-6">
                 <div>
                     <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Repository (owner/repo)</label>
-                    <input 
-                        type="text" 
-                        value={githubRepo} 
-                        onChange={e => {
-                            setGithubRepo(e.target.value);
-                            localStorage.setItem('dialogtree_github_repo', e.target.value);
-                        }} 
-                        placeholder="e.g. karanmertiya/dialogtree" 
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" 
-                    />
+                    <input type="text" value={githubRepo} onChange={e => { setGithubRepo(e.target.value); localStorage.setItem('dialogtree_github_repo', e.target.value); }} placeholder="e.g. karanmertiya/dialogtree" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
                 </div>
                 <div>
                     <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Commit Message</label>
@@ -558,16 +609,7 @@ export default function DialogTreeHome() {
                 </div>
                 <div>
                     <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">GitHub Personal Access Token</label>
-                    <input 
-                        type="password" 
-                        value={githubToken} 
-                        onChange={e => {
-                            setGithubToken(e.target.value);
-                            localStorage.setItem('dialogtree_github_token', e.target.value);
-                        }} 
-                        placeholder="ghp_xxxxxxxxxxxx" 
-                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" 
-                    />
+                    <input type="password" value={githubToken} onChange={e => { setGithubToken(e.target.value); localStorage.setItem('dialogtree_github_token', e.target.value); }} placeholder="ghp_xxxxxxxxxxxx" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
                     <p className="text-[10px] text-zinc-500 mt-1">Needs 'repo' scope. 🔒 Saved securely in Local Storage.</p>
                 </div>
 
@@ -623,7 +665,11 @@ export default function DialogTreeHome() {
           <div className="mb-6">
             <div className="text-xs font-semibold text-zinc-500 mb-2 px-2 uppercase tracking-wider flex justify-between items-center">
                 Workspaces
-                <button onClick={createNewWorkspace} className="hover:text-indigo-400 transition-colors" title="New Workspace"><Plus size={14}/></button>
+                <div className="flex gap-2">
+                    {/* 🔥 IMPORT REPO BUTTON IN SIDEBAR */}
+                    <button onClick={() => setImportModalOpen(true)} className="hover:text-emerald-400 transition-colors" title="Import from GitHub"><Import size={14}/></button>
+                    <button onClick={createNewWorkspace} className="hover:text-indigo-400 transition-colors" title="New Workspace"><Plus size={14}/></button>
+                </div>
             </div>
             <div className="space-y-1">
                 {recentWorkspaces.map(ws => (
@@ -749,7 +795,7 @@ export default function DialogTreeHome() {
                     ))}
                  </div>
               )}
-              <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }} disabled={switching || !activeBranch} placeholder={`Message #${activeBranch?.name || '...'}`} className="w-full bg-transparent border-none py-3 px-2 focus:outline-none focus:ring-0 text-[15px] resize-none overflow-y-auto" style={{ minHeight: '50px', maxHeight: '200px', height: input ? 'auto' : '50px' }} />
+              <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }} disabled={switching || !activeBranch} placeholder={`Message #${activeBranch?.name || '...'} (Tip: Use @filename to fetch context)`} className="w-full bg-transparent border-none py-3 px-2 focus:outline-none focus:ring-0 text-[15px] resize-none overflow-y-auto" style={{ minHeight: '50px', maxHeight: '200px', height: input ? 'auto' : '50px' }} />
             </div>
             <button onClick={() => handleSend()} disabled={loading || switching || (!input.trim() && selectedFiles.length === 0)} className="p-3.5 mb-1 bg-indigo-600 rounded-2xl hover:bg-indigo-500 disabled:opacity-50 disabled:bg-zinc-800 transition-all active:scale-95 shrink-0"><Send size={18} className={(input.trim() || selectedFiles.length > 0) ? "text-white" : "text-zinc-400"} /></button>
           </div>
@@ -794,7 +840,7 @@ export default function DialogTreeHome() {
          </aside>
       )}
 
-      {/* 🔥 RESIZABLE ARTIFACT EDITOR PANELS WITH PREVIEW AND COPILOT */}
+      {/* 🔥 RESIZABLE ARTIFACT EDITOR PANELS WITH PREVIEW AND BUG SQUASHER */}
       {activeArtifact && (
         <>
             <div 
@@ -811,6 +857,13 @@ export default function DialogTreeHome() {
                             <button onClick={() => setEditorTab('code')} className={`px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors ${editorTab === 'code' ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Code</button>
                             <button onClick={() => setEditorTab('preview')} className={`flex items-center gap-1 px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors ${editorTab === 'preview' ? 'bg-emerald-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}><Play size={12}/> Preview</button>
                         </div>
+
+                        {/* 🔥 BUG SQUASHER BUTTON (Only shows if Monaco detects an error!) */}
+                        {editorErrors.length > 0 && editorTab === 'code' && (
+                            <button onClick={handleAutoFix} className="ml-4 flex items-center gap-1.5 px-3 py-1 bg-red-900/30 border border-red-700 hover:bg-red-900/50 text-red-400 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors animate-pulse">
+                                <Bug size={12}/> Fix {editorErrors.length} Bug{editorErrors.length > 1 ? 's' : ''}
+                            </button>
+                        )}
                     </div>
                     <div className="flex gap-2 shrink-0">
                         <button onClick={() => setGithubModalOpen(true)} className="flex items-center gap-1.5 text-xs bg-white hover:bg-zinc-200 text-black font-semibold px-3 py-1.5 rounded-lg transition-colors"><GitCommit size={14}/> Commit</button>
@@ -832,7 +885,7 @@ export default function DialogTreeHome() {
                             options={{ minimap: { enabled: false }, fontSize: 13, wordWrap: 'on', padding: { top: 16 }, scrollBeyondLastLine: false, smoothScrolling: true }}
                         />
                         
-                        {/* 🔥 NEW: FLOATING COPILOT EDITOR */}
+                        {/* 🔥 FLOATING COPILOT EDITOR */}
                         {editorSelection && (
                             <div className="absolute bottom-6 right-6 z-50 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl p-4 w-80 animate-in fade-in slide-in-from-bottom-4">
                                 <div className="text-xs font-bold text-indigo-400 mb-3 flex items-center gap-1"><Sparkles size={14}/> Copilot: Edit Selection</div>
