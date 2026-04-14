@@ -84,6 +84,7 @@ export default function DialogTreeHome() {
   const [isChitchatOpen, setIsChitchatOpen] = useState(false);
   const [chitchatInput, setChitchatInput] = useState("");
   const [chitchatMsgs, setChitchatMsgs] = useState<any[]>([]);
+  const [chitchatLoading, setChitchatLoading] = useState(false);
 
   const [forkModal, setForkModal] = useState({ isOpen: false, messageId: null as string | null, name: "", isEphemeral: true });
   const [prModalOpen, setPrModalOpen] = useState(false);
