@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, CheckSquare } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { api } from '@/lib/api';
@@ -49,12 +49,17 @@ export default function DialogTreeHome() {
 
   // GITHUB STATE
   const [githubModalOpen, setGithubModalOpen] = useState(false);
-  const [importModalOpen, setImportModalOpen] = useState(false);
   const [githubRepo, setGithubRepo] = useState("");
   const [githubCommitMsg, setGithubCommitMsg] = useState("");
   const [githubToken, setGithubToken] = useState("");
   const [githubPushAll, setGithubPushAll] = useState(true); 
   const [githubPushing, setGithubPushing] = useState(false);
+
+  // 🔥 NEW IMPORT STATE
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importStep, setImportStep] = useState<'input' | 'select'>('input');
+  const [repoTree, setRepoTree] = useState<any[]>([]);
+  const [selectedTreeFiles, setSelectedTreeFiles] = useState<Set<string>>(new Set());
   const [githubImporting, setGithubImporting] = useState(false);
 
   const [isArtifactSidebarOpen, setIsArtifactSidebarOpen] = useState(false);
@@ -238,30 +243,18 @@ export default function DialogTreeHome() {
       if (name) { window.location.href = `/?newWsName=${encodeURIComponent(name)}`; }
   };
 
-  // 🔥 NEW: DELETE WORKSPACE FUNCTION
   const deleteWorkspace = async (wsId: string, e: React.MouseEvent) => {
       e.stopPropagation();
       e.preventDefault();
-      
       if (!window.confirm("Are you sure you want to permanently delete this workspace and all its branches/messages?")) return;
-      
       try {
-          // 1. Delete entirely from database (cascades down to branches and messages)
           const { error } = await supabase.from('workspaces').delete().eq('id', wsId);
           if (error) throw error;
-
-          // 2. Remove from Local Storage and State
           const updated = recentWorkspaces.filter(w => w.id !== wsId);
           localStorage.setItem('recent_workspaces', JSON.stringify(updated));
           setRecentWorkspaces(updated);
-
-          // 3. If they deleted the workspace they are currently looking at, reload to clean slate
-          if (workspace?.id === wsId) {
-              window.location.href = '/';
-          }
-      } catch (err: any) {
-          alert(`Failed to delete workspace: ${err.message}`);
-      }
+          if (workspace?.id === wsId) window.location.href = '/';
+      } catch (err: any) { alert(`Failed to delete workspace: ${err.message}`); }
   };
 
   const handleSend = async (overridePrompt?: string) => {
@@ -386,11 +379,30 @@ export default function DialogTreeHome() {
       }
   };
 
-  const executeGithubImport = async () => {
-      if (!githubRepo || !activeBranch) return;
+  // 🔥 NEW: GET TREE FOR SELECTION
+  const executeGithubFetchTree = async () => {
+      if (!githubRepo) return;
       setGithubImporting(true);
       try {
-          const res = await api.pullFromGithub(githubRepo, githubToken);
+          const res = await api.getGithubTree(githubRepo, githubToken);
+          if (res.error) throw new Error(res.error);
+          setRepoTree(res.tree);
+          setSelectedTreeFiles(new Set(res.tree.map((f: any) => f.path)));
+          setImportStep('select');
+      } catch (err: any) {
+          alert("Failed to fetch repo structure.\n\nError: " + err.message);
+      } finally {
+          setGithubImporting(false);
+      }
+  };
+
+  // 🔥 NEW: IMPORT SELECTED FILES
+  const executeGithubImportFiles = async () => {
+      if (!activeBranch || selectedTreeFiles.size === 0) return;
+      setGithubImporting(true);
+      try {
+          const filesToFetch = repoTree.filter(f => selectedTreeFiles.has(f.path));
+          const res = await api.importGithubFiles(githubRepo, filesToFetch, githubToken);
           if (res.error) throw new Error(res.error);
           
           let systemContent = `✅ **Imported ${res.files.length} files from \`${githubRepo}\`**\n\n`;
@@ -404,12 +416,14 @@ export default function DialogTreeHome() {
           const { error } = await supabase.from('messages').insert({
               branch_id: activeBranch.id,
               role: 'system',
-              sender_type: 'system', 
+              sender_type: 'system',
               content: systemContent
           });
 
           if (error) throw error;
+          
           setImportModalOpen(false);
+          setImportStep('input');
       } catch (err: any) {
           alert("Import Failed.\n\nError: " + err.message);
       } finally {
@@ -590,30 +604,71 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      {/* REPO IMPORT MODAL */}
+      {/* 🔥 UPDATED REPO IMPORT MODAL WITH CHECKBOXES */}
       {importModalOpen && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
-          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-2xl shadow-2xl">
             <div className="flex justify-between items-center mb-4">
                 <h2 className="text-lg font-bold flex items-center gap-2"><Import size={20} className="text-emerald-400"/> Import Repository</h2>
-                <button onClick={() => setImportModalOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={20}/></button>
+                <button onClick={() => { setImportModalOpen(false); setImportStep('input'); }} className="text-zinc-500 hover:text-zinc-300"><X size={20}/></button>
             </div>
-            <div className="space-y-4 mb-6">
-                <div>
-                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Repository (owner/repo)</label>
-                    <input type="text" value={githubRepo} onChange={e => { setGithubRepo(e.target.value); localStorage.setItem('dialogtree_github_repo', e.target.value); }} placeholder="e.g. karanmertiya/dialogtree" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
-                </div>
-                <div>
-                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">GitHub Token (If Private)</label>
-                    <input type="password" value={githubToken} onChange={e => { setGithubToken(e.target.value); localStorage.setItem('dialogtree_github_token', e.target.value); }} placeholder="Optional for public repos..." className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
-                </div>
-            </div>
-            <div className="flex justify-end gap-3">
-                <button onClick={() => setImportModalOpen(false)} className="px-4 py-2 text-sm text-zinc-400">Cancel</button>
-                <button onClick={executeGithubImport} disabled={githubImporting || !githubRepo} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-semibold flex items-center gap-2">
-                    {githubImporting ? <Loader2 size={14} className="animate-spin"/> : <Import size={14}/>} Import Files
-                </button>
-            </div>
+            
+            {importStep === 'input' ? (
+                <>
+                    <div className="space-y-4 mb-6">
+                        <div>
+                            <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Repository (owner/repo)</label>
+                            <input type="text" value={githubRepo} onChange={e => { setGithubRepo(e.target.value); localStorage.setItem('dialogtree_github_repo', e.target.value); }} placeholder="e.g. karanmertiya/dialogtree" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">GitHub Token (If Private)</label>
+                            <input type="password" value={githubToken} onChange={e => { setGithubToken(e.target.value); localStorage.setItem('dialogtree_github_token', e.target.value); }} placeholder="Optional for public repos..." className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
+                        </div>
+                    </div>
+                    <div className="flex justify-end gap-3">
+                        <button onClick={() => setImportModalOpen(false)} className="px-4 py-2 text-sm text-zinc-400">Cancel</button>
+                        <button onClick={executeGithubFetchTree} disabled={githubImporting || !githubRepo} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-semibold flex items-center gap-2">
+                            {githubImporting ? <Loader2 size={14} className="animate-spin"/> : <Folder size={14}/>} Select Files...
+                        </button>
+                    </div>
+                </>
+            ) : (
+                <>
+                    <div className="mb-4">
+                        <div className="flex justify-between items-center text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2">
+                            <span>Select files to import ({selectedTreeFiles.size} selected)</span>
+                            <div className="flex gap-3">
+                                <button onClick={() => setSelectedTreeFiles(new Set(repoTree.map(f => f.path)))} className="hover:text-emerald-400">Select All</button>
+                                <button onClick={() => setSelectedTreeFiles(new Set())} className="hover:text-zinc-200">Clear</button>
+                            </div>
+                        </div>
+                        <div className="max-h-80 overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-lg p-2 space-y-1">
+                            {repoTree.map(file => (
+                               <label key={file.path} className="flex items-center gap-3 text-sm text-zinc-300 hover:bg-zinc-900 p-1.5 rounded cursor-pointer transition-colors">
+                                  <input 
+                                      type="checkbox" 
+                                      checked={selectedTreeFiles.has(file.path)} 
+                                      onChange={(e) => {
+                                         const newSet = new Set(selectedTreeFiles);
+                                         if (e.target.checked) newSet.add(file.path);
+                                         else newSet.delete(file.path);
+                                         setSelectedTreeFiles(newSet);
+                                      }} 
+                                      className="rounded bg-zinc-900 border-zinc-700 text-emerald-600 focus:ring-emerald-600 w-4 h-4" 
+                                  />
+                                  <span className="truncate font-mono text-[13px]">{file.path}</span>
+                               </label>
+                            ))}
+                        </div>
+                    </div>
+                    <div className="flex justify-between items-center">
+                        <button onClick={() => setImportStep('input')} className="px-4 py-2 text-sm text-zinc-400">Back</button>
+                        <button onClick={executeGithubImportFiles} disabled={githubImporting || selectedTreeFiles.size === 0} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-semibold flex items-center gap-2 shadow-lg shadow-emerald-900/20">
+                            {githubImporting ? <Loader2 size={14} className="animate-spin"/> : <Import size={14}/>} Import {selectedTreeFiles.size} Files
+                        </button>
+                    </div>
+                </>
+            )}
           </div>
         </div>
       )}
@@ -706,7 +761,6 @@ export default function DialogTreeHome() {
                                 <span className="truncate">{ws.name}</span>
                             </div>
                         </a>
-                        {/* 🔥 DELETE WORKSPACE BUTTON */}
                         <button onClick={(e) => deleteWorkspace(ws.id, e)} className="absolute right-2 p-1.5 bg-zinc-950/80 rounded-md text-zinc-600 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-opacity z-10" title="Delete Workspace">
                             <Trash size={14} />
                         </button>

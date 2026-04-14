@@ -18,7 +18,10 @@ export const api = {
   pushToGithub: (repoName: string, branchName: string, files: {path: string, content: string}[], commitMessage: string, patToken?: string) => 
     fetch(`${API_BASE}/github/push`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ repo: repoName, branch: branchName, files: files, message: commitMessage, token: patToken }) }).then(res => res.json()),
     
-  // 🔥 NEW: Pull from GitHub
-  pullFromGithub: (repoName: string, patToken?: string) => 
-    fetch(`/api/github/pull`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ repo: repoName, token: patToken }) }).then(res => res.json())
+  // 🔥 TWO-STEP GITHUB PULL API
+  getGithubTree: (repoName: string, patToken?: string) => 
+    fetch(`/api/github/pull`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'getTree', repo: repoName, token: patToken }) }).then(res => res.json()),
+    
+  importGithubFiles: (repoName: string, filesToFetch: any[], patToken?: string) => 
+    fetch(`/api/github/pull`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'getFiles', repo: repoName, filesToFetch, token: patToken }) }).then(res => res.json())
 };
