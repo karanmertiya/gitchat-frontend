@@ -1,13 +1,13 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User as UserIcon, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, ChevronRight, AlertTriangle, CheckCircle2, RotateCcw, Settings, Cpu, Server, Database, Activity, Shield } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, LogOut, Code, Globe, File, CheckCircle, MessageCircle, Share, Download, Trash, User as UserIcon, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, ChevronRight, AlertTriangle, CheckCircle2, RotateCcw, Settings, Cpu, Server, Database, Activity, Shield, BrainCircuit, Network, Bot } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import toast, { Toaster } from 'react-hot-toast'; // 🔥 NEW: Pro Notifications
+import toast, { Toaster } from 'react-hot-toast'; 
 
 import { api } from '@/lib/api';
 import { supabase } from '@/lib/supabase';
-import { User, Workspace, Branch, Message, Artifact } from '@/types'; // 🔥 NEW: Strict Typing
+import { User, Workspace, Branch, Message, Artifact } from '@/types'; 
 
 import Editor, { useMonaco } from "@monaco-editor/react";
 import { Prism as SyntaxHighlighter } from 'react-syntax-highlighter';
@@ -55,7 +55,6 @@ export default function DialogTreeHome() {
   const [copilotInput, setCopilotInput] = useState("");
   const [editorErrors, setEditorErrors] = useState<any[]>([]);
 
-  // Modals & Github State
   const [githubModalOpen, setGithubModalOpen] = useState(false);
   const [githubRepo, setGithubRepo] = useState("");
   const [githubCommitMsg, setGithubCommitMsg] = useState("");
@@ -387,7 +386,6 @@ export default function DialogTreeHome() {
     const lastMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
     const safeHistory = messages.filter(m => !(m.role === 'system' && m.content.includes('✅ **Imported')));
     
-    // Optimistic UI update
     setMessages(prev => [...prev, { role: 'user', content: displayPrompt, id: 'temp' }]);
 
     try {
@@ -432,12 +430,11 @@ export default function DialogTreeHome() {
       }
       
       if (aiMode === 'agent') engineeredPrompt = `[AUTONOMOUS LOOP] ` + engineeredPrompt + `\n\nFix this silently and perfectly so the next deployment succeeds.`;
-      
       handleSend(engineeredPrompt);
   };
 
   const submitFork = async () => {
-    if (!forkModal.name.trim() || !forkModal.messageId || !workspace) return; // 🔥 ADDED NULL CHECK
+    if (!forkModal.name.trim() || !forkModal.messageId || !workspace) return;
     setLoading(true); setForkModal(prev => ({ ...prev, isOpen: false })); 
     try { 
         await api.branch(workspace.id, forkModal.name, forkModal.isEphemeral, forkModal.messageId, activeBranch!.id); 
@@ -448,7 +445,6 @@ export default function DialogTreeHome() {
 
   const deleteBranch = async (branchId: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    // Using a custom toast instead of window.confirm for premium UI
     toast((t) => (
         <div className="flex flex-col gap-3">
             <span className="text-sm font-semibold">Delete this timeline forever?</span>
@@ -699,7 +695,6 @@ export default function DialogTreeHome() {
                 <div className="flex-grow border-t border-zinc-800"></div><span className="flex-shrink-0 mx-4 text-zinc-500 text-xs uppercase tracking-widest">Or continue with email</span><div className="flex-grow border-t border-zinc-800"></div>
               </div>
               <form onSubmit={handleEmailAuth} className="space-y-4">
-                {authError && <div className="bg-red-500/10 border border-red-500/50 text-red-400 text-sm p-3 rounded-lg">{authError}</div>}
                 {isSignUp && (
                   <div><label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Full Name</label><input type="text" value={authName} onChange={e => setAuthName(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500" placeholder="Jane Doe" /></div>
                 )}
@@ -707,7 +702,7 @@ export default function DialogTreeHome() {
                 <div><label className="block text-xs font-medium text-zinc-400 mb-1.5 uppercase tracking-wider">Password</label><input type="password" value={authPassword} onChange={e => setAuthPassword(e.target.value)} required className="w-full bg-zinc-900 border border-zinc-800 rounded-xl p-3 text-white focus:outline-none focus:border-indigo-500" placeholder="••••••••" /></div>
                 <button type="submit" disabled={authLoading} className="w-full bg-white hover:bg-zinc-200 text-zinc-950 font-semibold py-3 rounded-xl transition-all disabled:opacity-50 flex justify-center items-center gap-2 mt-4">{authLoading ? <Loader2 size={18} className="animate-spin text-zinc-500" /> : null}{isSignUp ? 'Create Account' : 'Sign In'}</button>
               </form>
-              <div className="mt-8 text-center"><button onClick={() => { setIsSignUp(!isSignUp); setAuthError(''); }} className="text-sm text-zinc-500 hover:text-indigo-400 transition-colors">{isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}</button></div>
+              <div className="mt-8 text-center"><button onClick={() => { setIsSignUp(!isSignUp); }} className="text-sm text-zinc-500 hover:text-indigo-400 transition-colors">{isSignUp ? 'Already have an account? Sign in' : "Don't have an account? Sign up"}</button></div>
             </div>
           </div>
         </div>
@@ -717,7 +712,6 @@ export default function DialogTreeHome() {
   return (
     <div className="flex h-screen bg-zinc-950 text-zinc-100 font-sans relative overflow-hidden">
       
-      {/* 🔥 THE TOASTER COMPONENT */}
       <Toaster position="bottom-right" toastOptions={{ style: { background: '#18181b', color: '#e4e4e7', border: '1px solid #27272a' } }} />
 
       {workspace && session && <MultiplayerCursors workspaceId={workspace.id} user={session.user} />}
@@ -880,7 +874,7 @@ export default function DialogTreeHome() {
         </div>
       )}
 
-      <MergeRequestModal isOpen={prModalOpen} onClose={() => setPrModalOpen(false)} onConfirm={confirmMerge} activeBranch={activeBranch} timelineArtifacts={allArtifacts} mainArtifacts={mainArtifacts} isDiffLoading={isDiffLoading} loading={loading} />
+      <MergeRequestModal isOpen={prModalOpen} onClose={() => setPrModalOpen(false)} onConfirm={confirmMerge} activeBranch={activeBranch as any} timelineArtifacts={allArtifacts} mainArtifacts={mainArtifacts} isDiffLoading={isDiffLoading} loading={loading} />
 
       <aside className="w-72 border-r border-zinc-800 flex flex-col bg-zinc-950/50 z-10 shrink-0">
         <div className="p-4 flex items-center justify-between mb-2">
@@ -1089,7 +1083,7 @@ export default function DialogTreeHome() {
                         <div className="flex items-center justify-between mb-2">
                            <span className="text-[11px] font-bold text-zinc-300 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 truncate max-w-[150px]" title={art.filename}>{art.filename.split('/').pop()}</span>
                            <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                              <button onClick={(e) => { e.stopPropagation(); downloadCode(art.code, art.filename); }} className="text-zinc-400 hover:text-zinc-200 text-xs"><Download size={14}/></button>
+                              <button onClick={(e) => { e.stopPropagation(); downloadCode(art.code, art.filename); toast.success('Downloaded'); }} className="text-zinc-400 hover:text-zinc-200 text-xs"><Download size={14}/></button>
                            </div>
                         </div>
                         <div className="text-[10px] uppercase font-bold text-indigo-400/70 mb-1.5">{art.lang}</div>
@@ -1123,7 +1117,7 @@ export default function DialogTreeHome() {
                     </div>
                     <div className="flex gap-2 shrink-0">
                         <button onClick={() => setGithubModalOpen(true)} className="flex items-center gap-1.5 text-xs bg-white hover:bg-zinc-200 text-black font-semibold px-3 py-1.5 rounded-lg transition-colors"><GitCommit size={14}/> Commit</button>
-                        <button onClick={() => downloadCode(activeArtifact.code, activeArtifact.filename)} className="flex items-center gap-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors"><Download size={14}/> D/L</button>
+                        <button onClick={() => { downloadCode(activeArtifact.code, activeArtifact.filename); toast.success('Downloaded'); }} className="flex items-center gap-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors"><Download size={14}/> D/L</button>
                         <button onClick={() => setActiveArtifact(null)} className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-zinc-800 transition-colors"><X size={18}/></button>
                     </div>
                 </div>
