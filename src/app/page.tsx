@@ -1099,7 +1099,7 @@ export default function DialogTreeHome() {
             </aside>
         </>
       )}
-      <style dangerouslySetContent={{ __html: `
+      <style dangerouslySetInnerHTML={{ __html: `
         .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
         .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
         .custom-scrollbar::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 10px; }
