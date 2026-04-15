@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, Code, Globe, File, CheckCircle, Share, Download, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, AlertTriangle, CheckCircle2, RotateCcw, Settings, Cpu, Server, Database, Activity, Shield, BrainCircuit, Network, Bot, Link } from 'lucide-react';
+import { GitBranch, GitMerge, Send, Zap, Loader2, GitFork, X, Save, Paperclip, Code, Globe, File, CheckCircle, Share, Download, Library, Cloud, ChevronDown, GitCommit, Folder, Plus, Play, Sparkles, Bug, Import, AlertTriangle, CheckCircle2, RotateCcw, Settings, Cpu, Server, Database, Activity, Shield, BrainCircuit, Network, Bot, Link, Trash } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import toast, { Toaster } from 'react-hot-toast'; 
@@ -17,7 +17,8 @@ import { downloadCode, downloadAllArtifacts, extractAllArtifacts, exportMD, expo
 import MergeRequestModal from '@/components/MergeRequestModal';
 import PreviewEngine from '@/components/PreviewEngine';
 import MultiplayerCursors from '@/components/MultiplayerCursors';
-import Sidebar from '@/components/Sidebar'; // 🔥 THE NEW MODULAR SIDEBAR
+import Sidebar from '@/components/Sidebar';
+import FolderTreeItem from '@/components/FolderTree';
 
 export default function DialogTreeHome() {
   const monaco = useMonaco();
@@ -73,6 +74,26 @@ export default function DialogTreeHome() {
   const [aiModeMenuOpen, setAiModeMenuOpen] = useState(false);
   const [aiMode, setAiMode] = useState<'standard' | 'deepthink' | 'orchestrate' | 'agent'>('standard');
 
+  // Modals State
+  const [forkModal, setForkModal] = useState({ isOpen: false, messageId: null as string | null, name: "", isEphemeral: true });
+  const [importModalOpen, setImportModalOpen] = useState(false);
+  const [importStep, setImportStep] = useState<'input' | 'select'>('input');
+  const [repoTree, setRepoTree] = useState<any[]>([]);
+  const [folderStructure, setFolderStructure] = useState<any>({});
+  const [selectedTreeFiles, setSelectedTreeFiles] = useState<Set<string>>(new Set());
+  const [githubImporting, setGithubImporting] = useState(false);
+  const [githubModalOpen, setGithubModalOpen] = useState(false);
+  const [githubRepo, setGithubRepo] = useState("");
+  const [githubCommitMsg, setGithubCommitMsg] = useState("");
+  const [githubToken, setGithubToken] = useState("");
+  const [githubPushAll, setGithubPushAll] = useState(true); 
+  const [githubPushing, setGithubPushing] = useState(false);
+  const [prModalOpen, setPrModalOpen] = useState(false);
+  const [mainArtifacts, setMainArtifacts] = useState<Artifact[]>([]);
+  const [isDiffLoading, setIsDiffLoading] = useState(false);
+  const [isArtifactSidebarOpen, setIsArtifactSidebarOpen] = useState(false);
+  const [exportMenuOpen, setExportMenuOpen] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   const timelineArtifacts = extractAllArtifacts(messages);
@@ -96,6 +117,12 @@ export default function DialogTreeHome() {
       });
   };
 
+  const handleAutoFix = () => {
+      if (editorErrors.length === 0 || !activeArtifact) return;
+      const errorText = editorErrors.map(e => `Line ${e.startLineNumber}: ${e.message}`).join('\n');
+      handleSend(`I have syntax errors in \`${activeArtifact.filename}\`.\n\nErrors:\n${errorText}\n\nPlease fix the code.`);
+  };
+
   const startResizing = useCallback((mouseDownEvent: React.MouseEvent) => {
     const startWidth = editorWidth;
     const startPos = mouseDownEvent.clientX;
@@ -112,6 +139,8 @@ export default function DialogTreeHome() {
     supabase.auth.getSession().then(({ data: { session } }) => { setSession(session as any); if (!session) setIsInitializing(false); });
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => { setSession(session as any); if (!session) setIsInitializing(false); });
 
+    setGithubRepo(localStorage.getItem('dialogtree_github_repo') || "");
+    setGithubToken(localStorage.getItem('dialogtree_github_token') || "");
     setVercelToken(localStorage.getItem('dialogtree_vercel_token') || "");
     setRenderToken(localStorage.getItem('dialogtree_render_token') || "");
     setSupabaseToken(localStorage.getItem('dialogtree_supabase_token') || "");
@@ -231,15 +260,15 @@ export default function DialogTreeHome() {
     } catch (error: any) { toast.error(error.message); } finally { setAuthLoading(false); }
   };
 
+  const handleOAuth = async (provider: 'google' | 'github') => { await supabase.auth.signInWithOAuth({ provider }); };
   const handleLogout = async () => { await supabase.auth.signOut(); setWorkspace(null); setActiveBranch(null); setMessages([]); setRepoFiles([]); toast.success('Logged out securely.'); };
+
   const createNewWorkspace = () => { const hash = Math.floor(1000 + Math.random() * 9000); window.location.href = `/?newWsName=Untitled Workspace ${hash}`; };
 
-  // 🔥 NEW: JINA CHAT IMPORTER MICROSERVICE INTEGRATION
   const importExternalChat = async () => {
       if (!chatImportUrl) return;
       const loadId = toast.loading("Extracting external chat...");
       try {
-          // You must have a workspace initialized to attach a branch to it.
           let currentWsId = workspace?.id;
           if (!currentWsId) {
              const initData = await api.init(session!.user.id, "Imported Session", null);
@@ -278,7 +307,6 @@ export default function DialogTreeHome() {
                   { branch_id: newBranchId, filename: 'src/App.jsx', language: 'javascript', content: `export default function App() {\n  return (\n    <div style={{ padding: '2rem', fontFamily: 'sans-serif' }}>\n      <h1 style={{ color: '#6366f1' }}>⚡️ Vite + React Sandbox</h1>\n      <p>Your instant WebContainer is ready. Ask Gemini to add some components!</p>\n    </div>\n  )\n}` },
               ];
           } else if (type === 'web3-saas') {
-              // 🔥 NEW: BANKLESS CRYPTO TEMPLATE (Solana Web3)
               files = [
                   { branch_id: newBranchId, filename: 'package.json', language: 'json', content: `{\n  "name": "solana-dapp",\n  "private": true,\n  "type": "module",\n  "scripts": { "dev": "vite" },\n  "dependencies": {\n    "react": "^18.2.0",\n    "react-dom": "^18.2.0",\n    "@solana/web3.js": "^1.87.0",\n    "@solana/wallet-adapter-react": "^0.15.35",\n    "@solana/wallet-adapter-react-ui": "^0.9.35",\n    "@solana/wallet-adapter-wallets": "^0.19.24"\n  },\n  "devDependencies": { "@vitejs/plugin-react": "^4.2.1", "vite": "^5.1.4" }\n}` },
                   { branch_id: newBranchId, filename: 'vite.config.js', language: 'javascript', content: `import { defineConfig } from 'vite'\nimport react from '@vitejs/plugin-react'\nexport default defineConfig({ plugins: [react()] })` },
@@ -297,6 +325,37 @@ export default function DialogTreeHome() {
           toast.success('Template deployed successfully!', { id: toastId });
           window.location.href = `/?workspace=${initData.workspace.id}`;
       } catch (err: any) { toast.error("Failed to spawn template.", { id: toastId }); } finally { setLoading(false); }
+  };
+
+  const saveWorkspaceRename = async (wsId: string) => {
+      if (!editWsName.trim()) { setEditingWsId(null); return; }
+      try {
+          await supabase.from('workspaces').update({ name: editWsName }).eq('id', wsId);
+          const updated = recentWorkspaces.map(w => w.id === wsId ? { ...w, name: editWsName } : w);
+          localStorage.setItem('recent_workspaces', JSON.stringify(updated)); setRecentWorkspaces(updated);
+          if (workspace?.id === wsId) setWorkspace({ ...workspace, name: editWsName });
+          toast.success('Workspace renamed');
+      } catch (err) { toast.error('Failed to rename workspace'); } finally { setEditingWsId(null); }
+  };
+
+  const triggerDeleteWorkspace = (wsId: string, wsName: string, e: React.MouseEvent) => {
+      e.stopPropagation(); e.preventDefault();
+      const updated = recentWorkspaces.filter(w => w.id !== wsId);
+      setRecentWorkspaces(updated); localStorage.setItem('recent_workspaces', JSON.stringify(updated));
+      if (workspace?.id === wsId) { setWorkspace(null); setActiveBranch(null); window.history.pushState({}, '', `/`); }
+      const timer = setTimeout(async () => { await supabase.from('workspaces').delete().eq('id', wsId); setUndoToast(null); }, 5000);
+      setUndoToast({ id: wsId, name: wsName, timer });
+  };
+
+  const handleUndoDelete = () => {
+      if (undoToast) {
+          clearTimeout(undoToast.timer);
+          const restored = [{ id: undoToast.id, name: undoToast.name }, ...recentWorkspaces];
+          setRecentWorkspaces(restored); localStorage.setItem('recent_workspaces', JSON.stringify(restored));
+          if (!workspace) switchWorkspace(undoToast.id);
+          setUndoToast(null);
+          toast.success('Deletion reverted');
+      }
   };
 
   const simulatePipeline = () => {
@@ -370,6 +429,200 @@ export default function DialogTreeHome() {
       if (!copilotInput.trim() || !activeArtifact || !editorSelection) return;
       handleSend(`I need to modify \`${activeArtifact.filename}\`.\n\nPlease update this specific part of the code:\n\`\`\`${activeArtifact.lang}\n${editorSelection}\n\`\`\`\n\nInstructions: ${copilotInput}`);
       setEditorSelection(""); setCopilotInput("");
+  };
+
+  const injectAIArchitectScaffold = () => {
+      setInput(`**AI Model Integration Scaffold**\n\nI need to integrate a custom AI model into this project. Please build the modular pipeline.\n\n- **Model Type:** [e.g., DeepSeek R1 / Custom Finetune]\n- **Input Schema:** [e.g., JSON { text: string, max_length: number }]\n- **Expected Output:** [e.g., Streaming Markdown]\n- **Endpoint URL:** \n\nPlease generate the separate \`api/route.ts\` and the client-side \`useModel.ts\` hook.`);
+  };
+
+  const executeAutoHealer = async () => {
+      if (!activeBranch) return;
+      setDeployStatus('idle');
+      let engineeredPrompt = `The recent deployment of this branch failed.\n\nPlease analyze the code in this branch for any compilation, build, or syntax errors, explain what caused the crash, and provide the fully corrected files.`;
+
+      if (vercelToken) {
+          const loadId = toast.loading('Fetching remote build logs...');
+          try {
+              const depRes = await fetch(`https://api.vercel.com/v6/deployments?state=ERROR&limit=1`, { headers: { 'Authorization': `Bearer ${vercelToken}` } });
+              const depData = await depRes.json();
+              if (depData.deployments && depData.deployments.length > 0) {
+                  const eventRes = await fetch(`https://api.vercel.com/v2/deployments/${depData.deployments[0].uid}/events`, { headers: { 'Authorization': `Bearer ${vercelToken}` } });
+                  const eventData = await eventRes.json();
+                  const errorLogs = eventData.filter((log: any) => log.type === 'error').map((l:any) => l.text).join('\n');
+                  if (errorLogs) {
+                      engineeredPrompt = `My Vercel deployment just failed. Here are the exact build logs:\n\n\`\`\`\n${errorLogs}\n\`\`\`\n\nFind the file causing this error, fix it, and give me the complete corrected code.`;
+                      toast.success('Logs retrieved. Analyzing...', { id: loadId });
+                  }
+              }
+          } catch (err) { toast.error('Could not fetch logs. Running blind analysis.', { id: loadId }); }
+      }
+      
+      if (aiMode === 'agent') engineeredPrompt = `[AUTONOMOUS LOOP] ` + engineeredPrompt + `\n\nFix this silently and perfectly so the next deployment succeeds.`;
+      handleSend(engineeredPrompt);
+  };
+
+  const submitFork = async () => {
+    if (!forkModal.name.trim() || !forkModal.messageId || !workspace) return;
+    setLoading(true); setForkModal(prev => ({ ...prev, isOpen: false })); 
+    try { 
+        await api.branch(workspace.id, forkModal.name, forkModal.isEphemeral, forkModal.messageId, activeBranch!.id); 
+        toast.success(`Diverged timeline to ${forkModal.name}`);
+    } 
+    catch (err) { toast.error("Failed to create new timeline."); } finally { setLoading(false); }
+  };
+
+  const deleteBranch = async (branchId: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    toast((t) => (
+        <div className="flex flex-col gap-3">
+            <span className="text-sm font-semibold">Delete this timeline forever?</span>
+            <div className="flex gap-2 justify-end">
+                <button onClick={() => toast.dismiss(t.id)} className="px-3 py-1 bg-zinc-800 text-xs rounded hover:bg-zinc-700">Cancel</button>
+                <button onClick={async () => {
+                    toast.dismiss(t.id);
+                    try {
+                        await api.deleteBranch(branchId);
+                        if (activeBranch?.id === branchId) setActiveBranch(branches.find(b => b.name === 'main') || null);
+                        toast.success('Timeline deleted');
+                    } catch (err) { toast.error("Failed to delete"); }
+                }} className="px-3 py-1 bg-red-600 text-white text-xs rounded hover:bg-red-500">Delete</button>
+            </div>
+        </div>
+    ), { duration: 5000 });
+  };
+
+  const initiateMerge = async () => {
+    if (!activeBranch || activeBranch.name === 'main') { toast.error("You are already in the main timeline!"); return; }
+    setPrModalOpen(true); setIsDiffLoading(true);
+    try {
+        const mainBranch = branches.find(b => b.name === 'main');
+        if (mainBranch) {
+            const res = await api.getMessages(mainBranch.id);
+            if (res.messages) setMainArtifacts(extractAllArtifacts(res.messages));
+        }
+    } catch (err) {}
+    setIsDiffLoading(false);
+  };
+
+  const confirmMerge = async () => {
+    const mainBranch = branches.find(b => b.name === 'main');
+    const latestSourceMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
+    if (!mainBranch || !latestSourceMsgId) return;
+    setLoading(true); setPrModalOpen(false);
+    const loadId = toast.loading('Merging timelines...');
+    try {
+      const res = await api.merge(activeBranch!.id, mainBranch.id, latestSourceMsgId, null, messages);
+      if(res.error) throw new Error(res.error);
+      await api.deleteBranch(activeBranch!.id);
+      setActiveBranch(mainBranch); 
+      toast.success('Timelines merged successfully!', { id: loadId });
+    } catch(e: any) { toast.error(`Merge failed: ${e.message}`, { id: loadId }); } finally { setLoading(false); }
+  };
+
+  const executeGithubPush = async () => {
+      if (!githubRepo || !githubCommitMsg || !activeArtifact || !githubToken) { toast.error("Please fill in all fields!"); return; }
+      setGithubPushing(true);
+      const loadId = toast.loading('Pushing to GitHub...');
+      try {
+          const filesToSend = githubPushAll ? allArtifacts.map(art => ({ path: art.filename, content: art.code })) : [{ path: activeArtifact.filename, content: activeArtifact.code }];
+          const res = await api.pushToGithub(githubRepo, activeBranch?.name || 'main', filesToSend, githubCommitMsg, githubToken);
+          if (res.error) throw new Error(res.error);
+          
+          toast.success(`Pushed to GitHub! Monitoring CI/CD build...`, { id: loadId });
+          setGithubModalOpen(false); setGithubCommitMsg(""); setDeployStatus('building');
+          
+          if (pollIntervalRef.current) clearInterval(pollIntervalRef.current);
+          let attempts = 0;
+          pollIntervalRef.current = setInterval(async () => {
+              attempts++;
+              if (attempts > 30) { clearInterval(pollIntervalRef.current as NodeJS.Timeout); setDeployStatus('idle'); return; }
+              try {
+                  const statusRes = await fetch(`https://api.github.com/repos/${githubRepo}/commits/${activeBranch?.name || 'main'}/status`, { headers: { 'Authorization': `token ${githubToken}` } });
+                  const statusData = await statusRes.json();
+                  if (statusData.state === 'success') {
+                      setDeployStatus('success'); clearInterval(pollIntervalRef.current as NodeJS.Timeout);
+                      toast.success('Live Deployment Successful!');
+                      setTimeout(() => setDeployStatus('idle'), 5000);
+                  } else if (statusData.state === 'failure' || statusData.state === 'error') {
+                      setDeployStatus('error'); clearInterval(pollIntervalRef.current as NodeJS.Timeout);
+                      toast.error('Deployment Failed.');
+                      if (aiMode === 'agent') {
+                          toast.loading('Agent auto-healing activated...');
+                          executeAutoHealer();
+                      }
+                  }
+              } catch (err) {}
+          }, 5000);
+      } catch (err: any) { toast.error(err.message, { id: loadId }); } finally { setGithubPushing(false); }
+  };
+
+  const executeGithubFetchTree = async () => {
+      if (!githubRepo) return;
+      setGithubImporting(true);
+      const loadId = toast.loading('Fetching repository map...');
+      try {
+          const res = await api.getGithubTree(githubRepo, githubToken);
+          if (res.error) throw new Error(res.error);
+          setRepoTree(res.tree); setSelectedTreeFiles(new Set(res.tree.map((f: any) => f.path)));
+          const root: any = {};
+          res.tree.forEach((file: any) => {
+              const parts = file.path.split('/'); let current = root;
+              parts.forEach((part: string, i: number) => {
+                  if (!current[part]) current[part] = i === parts.length - 1 ? { _isFile: true } : {};
+                  current = current[part];
+              });
+          });
+          setFolderStructure(root); setImportStep('select');
+          toast.success('Map loaded.', { id: loadId });
+      } catch (err: any) { toast.error(err.message, { id: loadId }); } finally { setGithubImporting(false); }
+  };
+
+  const toggleFileSelection = (path: string) => {
+      setSelectedTreeFiles(prev => {
+          const next = new Set(prev);
+          if (next.has(path)) next.delete(path); else next.add(path);
+          return next;
+      });
+  };
+
+  const toggleFolderSelection = (path: string) => {
+      setSelectedTreeFiles(prev => {
+          const next = new Set(prev);
+          const folderFiles = repoTree.filter(f => f.path.startsWith(path + '/'));
+          const allSelected = folderFiles.every(f => next.has(f.path));
+          folderFiles.forEach(f => {
+              if (allSelected) next.delete(f.path); else next.add(f.path);
+          });
+          return next;
+      });
+  };
+
+  const executeGithubImportFiles = async () => {
+      if (!activeBranch || selectedTreeFiles.size === 0) return;
+      setGithubImporting(true);
+      const loadId = toast.loading(`Importing ${selectedTreeFiles.size} files...`);
+      try {
+          const filesToFetch = repoTree.filter(f => selectedTreeFiles.has(f.path));
+          const res = await api.importGithubFiles(githubRepo, filesToFetch, githubToken);
+          if (res.error) throw new Error(res.error);
+          
+          const fileRows = res.files.map((f: any) => {
+              const ext = f.path.split('.').pop() || 'text';
+              let lang = ext === 'js' ? 'javascript' : ext === 'ts' ? 'typescript' : ext === 'tsx' ? 'tsx' : ext === 'py' ? 'python' : ext === 'cpp' || ext === 'hpp' || ext === 'h' ? 'cpp' : ext;
+              return { branch_id: activeBranch.id, filename: f.path, content: f.content, language: lang };
+          });
+
+          const { error: fileError } = await supabase.from('files').insert(fileRows);
+          if (fileError) throw fileError;
+
+          await supabase.from('messages').insert({
+              branch_id: activeBranch.id, role: 'system', sender_type: 'system',
+              content: `✅ **Imported ${res.files.length} files from \`${githubRepo}\` into the Virtual File System.**`
+          });
+          
+          setImportModalOpen(false); setImportStep('input');
+          toast.success('Files successfully injected.', { id: loadId });
+      } catch (err: any) { toast.error(err.message, { id: loadId }); } finally { setGithubImporting(false); }
   };
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -468,7 +721,7 @@ export default function DialogTreeHome() {
          </div>
       )}
 
-      {/* Deploy Settings */}
+      {/* Deploy Settings Modal */}
       {deploySettingsOpen && (
         <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
           <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-lg shadow-2xl">
@@ -476,19 +729,132 @@ export default function DialogTreeHome() {
             <p className="text-xs text-zinc-400 mb-6 bg-zinc-950 p-3 rounded-lg border border-zinc-800 flex items-start gap-2"><Shield size={16} className="text-emerald-500 shrink-0 mt-0.5" />These Personal Access Tokens allow the Auto-Healer to read your build logs. They are stored securely in your browser's LocalStorage.</p>
             <div className="space-y-4 mb-6">
                 <div className="grid grid-cols-12 gap-4 items-center"><div className="col-span-4 flex items-center gap-2 text-sm font-medium text-zinc-300"><Cloud size={16} className="text-zinc-500"/> Vercel Token</div><input type="password" value={vercelToken} onChange={e => { setVercelToken(e.target.value); localStorage.setItem('dialogtree_vercel_token', e.target.value); }} className="col-span-8 bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:border-indigo-500 text-sm" /></div>
+                <div className="grid grid-cols-12 gap-4 items-center"><div className="col-span-4 flex items-center gap-2 text-sm font-medium text-zinc-300"><Server size={16} className="text-zinc-500"/> Render Token</div><input type="password" value={renderToken} onChange={e => { setRenderToken(e.target.value); localStorage.setItem('dialogtree_render_token', e.target.value); }} className="col-span-8 bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:border-indigo-500 text-sm" /></div>
+                <div className="grid grid-cols-12 gap-4 items-center"><div className="col-span-4 flex items-center gap-2 text-sm font-medium text-zinc-300"><Database size={16} className="text-zinc-500"/> Supabase PAT</div><input type="password" value={supabaseToken} onChange={e => { setSupabaseToken(e.target.value); localStorage.setItem('dialogtree_supabase_token', e.target.value); }} className="col-span-8 bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:border-indigo-500 text-sm" /></div>
             </div>
             <div className="flex justify-end"><button onClick={() => setDeploySettingsOpen(false)} className="px-5 py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-semibold">Done</button></div>
           </div>
         </div>
       )}
 
+      {/* GitHub Import Modal */}
+      {importModalOpen && (
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-2xl shadow-2xl">
+            <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-bold flex items-center gap-2"><Import size={20} className="text-emerald-400"/> Import Repository</h2>
+                <button onClick={() => { setImportModalOpen(false); setImportStep('input'); }} className="text-zinc-500 hover:text-zinc-300"><X size={20}/></button>
+            </div>
+            {importStep === 'input' ? (
+                <>
+                    <div className="space-y-4 mb-6">
+                        <div>
+                            <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Repository (owner/repo)</label>
+                            <input type="text" value={githubRepo} onChange={e => { setGithubRepo(e.target.value); localStorage.setItem('dialogtree_github_repo', e.target.value); }} placeholder="e.g. karanmertiya/dialogtree" className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
+                        </div>
+                        <div>
+                            <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">GitHub Token (If Private)</label>
+                            <input type="password" value={githubToken} onChange={e => { setGithubToken(e.target.value); localStorage.setItem('dialogtree_github_token', e.target.value); }} placeholder="Optional for public repos..." className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 focus:outline-none focus:border-indigo-500 text-sm" />
+                        </div>
+                    </div>
+                    <div className="flex justify-end gap-3">
+                        <button onClick={() => setImportModalOpen(false)} className="px-4 py-2 text-sm text-zinc-400">Cancel</button>
+                        <button onClick={executeGithubFetchTree} disabled={githubImporting || !githubRepo} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-semibold flex items-center gap-2">
+                            {githubImporting ? <Loader2 size={14} className="animate-spin"/> : <Folder size={14}/>} Select Files...
+                        </button>
+                    </div>
+                </>
+            ) : (
+                <>
+                    <div className="mb-4">
+                        <div className="flex justify-between items-center text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-2 border-b border-zinc-800 pb-2">
+                            <span>Select files to import ({selectedTreeFiles.size} selected)</span>
+                            <div className="flex gap-3">
+                                <button onClick={() => setSelectedTreeFiles(new Set(repoTree.map(f => f.path)))} className="hover:text-emerald-400 transition-colors">Select All</button>
+                                <button onClick={() => setSelectedTreeFiles(new Set())} className="hover:text-zinc-200 transition-colors">Clear</button>
+                            </div>
+                        </div>
+                        <div className="max-h-80 overflow-y-auto bg-zinc-950 border border-zinc-800 rounded-lg p-2 custom-scrollbar">
+                            {Object.keys(folderStructure).map(key => (
+                                <FolderTreeItem key={key} node={folderStructure[key]} path={key} selectedFiles={selectedTreeFiles} toggleFile={toggleFileSelection} toggleFolder={toggleFolderSelection} />
+                            ))}
+                        </div>
+                    </div>
+                    <div className="flex justify-between items-center mt-6">
+                        <button onClick={() => setImportStep('input')} className="px-4 py-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors">Back</button>
+                        <button onClick={executeGithubImportFiles} disabled={githubImporting || selectedTreeFiles.size === 0} className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-lg text-sm font-semibold flex items-center gap-2 shadow-lg shadow-emerald-900/20">
+                            {githubImporting ? <Loader2 size={14} className="animate-spin"/> : <Import size={14}/>} Import {selectedTreeFiles.size} Files
+                        </button>
+                    </div>
+                </>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* GitHub Push Modal */}
+      {githubModalOpen && activeArtifact && (
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-[70] flex items-center justify-center p-4">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex justify-between items-center mb-4">
+                <h2 className="text-lg font-bold flex items-center gap-2"><GitCommit size={20} className="text-white"/> Commit to GitHub</h2>
+                <button onClick={() => setGithubModalOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={20}/></button>
+            </div>
+            <div className="space-y-4 mb-6">
+                <div>
+                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Repository (owner/repo)</label>
+                    <input type="text" value={githubRepo} onChange={e => { setGithubRepo(e.target.value); localStorage.setItem('dialogtree_github_repo', e.target.value); }} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 text-sm" />
+                </div>
+                <div>
+                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">Commit Message</label>
+                    <input type="text" value={githubCommitMsg} onChange={e => setGithubCommitMsg(e.target.value)} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 text-sm" />
+                </div>
+                <div>
+                    <label className="block text-xs font-semibold text-zinc-400 uppercase tracking-wider mb-1.5">GitHub Personal Access Token</label>
+                    <input type="password" value={githubToken} onChange={e => { setGithubToken(e.target.value); localStorage.setItem('dialogtree_github_token', e.target.value); }} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-zinc-100 text-sm" />
+                </div>
+                <div className="bg-zinc-950/50 border border-zinc-800 rounded-lg p-3">
+                    <label className="flex items-center gap-2 cursor-pointer text-sm text-zinc-300">
+                        <input type="checkbox" checked={githubPushAll} onChange={(e) => setGithubPushAll(e.target.checked)} className="rounded bg-zinc-900 border-zinc-700 text-indigo-600" />
+                        Push entire <b>{activeBranch?.name || 'main'}</b> timeline ({allArtifacts.length} files)
+                    </label>
+                </div>
+            </div>
+            <div className="flex justify-end gap-3">
+                <button onClick={() => setGithubModalOpen(false)} className="px-4 py-2 text-sm text-zinc-400">Cancel</button>
+                <button onClick={executeGithubPush} disabled={githubPushing || !githubRepo || !githubCommitMsg || !githubToken} className="px-4 py-2 bg-white hover:bg-zinc-200 text-black rounded-lg text-sm font-semibold flex items-center gap-2">
+                    {githubPushing ? <Loader2 size={14} className="animate-spin"/> : <GitCommit size={14}/>} Push
+                </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Fork Modal */}
+      {forkModal.isOpen && (
+        <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center">
+          <div className="bg-zinc-900 border border-zinc-700 rounded-2xl p-6 w-full max-w-md shadow-2xl">
+            <div className="flex justify-between items-center mb-4"><h2 className="text-lg font-bold flex items-center gap-2"><GitFork size={20} className="text-indigo-400"/> Diverge Timeline</h2><button onClick={() => setForkModal(prev => ({ ...prev, isOpen: false }))} className="text-zinc-500 hover:text-zinc-300"><X size={20}/></button></div>
+            <input type="text" autoFocus placeholder="Name this timeline..." value={forkModal.name} onChange={e => setForkModal(prev => ({ ...prev, name: e.target.value }))} onKeyDown={e => e.key === 'Enter' && submitFork()} className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-3 text-zinc-100 mb-4 focus:outline-none focus:border-indigo-500" />
+            <div className="flex items-center gap-3 mb-6 bg-zinc-950/50 p-3 rounded-lg border border-zinc-800">
+              <input type="checkbox" id="ephemeral" checked={forkModal.isEphemeral} onChange={e => setForkModal(prev => ({ ...prev, isEphemeral: e.target.checked }))} className="w-4 h-4 rounded bg-zinc-900 border-zinc-700 text-indigo-600 focus:ring-indigo-600" />
+              <label htmlFor="ephemeral" className="text-sm text-zinc-300 flex items-center gap-2 cursor-pointer"><Zap size={14} className={forkModal.isEphemeral ? "text-amber-400" : "text-zinc-600"}/> Temporary Workspace</label>
+            </div>
+            <div className="flex justify-end gap-3"><button onClick={() => setForkModal(prev => ({ ...prev, isOpen: false }))} className="px-4 py-2 text-sm text-zinc-400">Cancel</button><button onClick={submitFork} disabled={!forkModal.name.trim()} className="px-4 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium">Create Branch</button></div>
+          </div>
+        </div>
+      )}
+
+      {/* Merge Modal */}
+      <MergeRequestModal isOpen={prModalOpen} onClose={() => setPrModalOpen(false)} onConfirm={confirmMerge} activeBranch={activeBranch as any} timelineArtifacts={allArtifacts} mainArtifacts={mainArtifacts} isDiffLoading={isDiffLoading} loading={loading} />
+
       {/* MODULAR SIDEBAR COMPONENT */}
       <Sidebar 
           session={session} workspace={workspace} branches={branches} activeBranch={activeBranch} 
           recentWorkspaces={recentWorkspaces} editingWsId={editingWsId} editWsName={editWsName} 
           setEditWsName={setEditWsName} setEditingWsId={setEditingWsId} switchWorkspace={switchWorkspace} 
-          saveWorkspaceRename={saveWorkspaceRename} triggerDeleteWorkspace={() => {}} 
-          setActiveBranch={setActiveBranch} deleteBranch={() => {}} setImportModalOpen={() => {}} 
+          saveWorkspaceRename={saveWorkspaceRename} triggerDeleteWorkspace={triggerDeleteWorkspace} 
+          setActiveBranch={setActiveBranch} deleteBranch={deleteBranch} setImportModalOpen={setImportModalOpen} 
           createNewWorkspace={createNewWorkspace} handleLogout={handleLogout} 
       />
 
@@ -542,14 +908,30 @@ export default function DialogTreeHome() {
                      <code className="bg-zinc-900 px-3 py-1 rounded-md text-xs text-indigo-300 border border-zinc-700 flex items-center gap-2">{activeBranch?.is_ephemeral && <Zap size={12} className="text-amber-400"/>}{activeBranch?.name || 'loading...'}</code>
                   </div>
                   <div className="flex items-center gap-3">
-                    <button onClick={() => setDeploySettingsOpen(true)} className="p-1.5 text-zinc-500 hover:text-zinc-300" title="Deploy Settings"><Settings size={14}/></button>
+                    
+                    {deployStatus === 'building' && (<div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-amber-500/30 bg-amber-500/10 text-amber-400 text-xs font-semibold animate-pulse"><Loader2 size={14} className="animate-spin" /> Building CI/CD...</div>)}
+                    {deployStatus === 'success' && (<div className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/10 text-emerald-400 text-xs font-semibold"><CheckCircle2 size={14} /> Deploy Success</div>)}
+                    {deployStatus === 'error' && (
+                        <div className="flex items-center gap-2">
+                            <button onClick={executeAutoHealer} className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-red-500 bg-red-500/20 hover:bg-red-500/30 text-red-400 text-xs font-bold transition-all shadow-[0_0_15px_rgba(239,68,68,0.4)] animate-bounce"><AlertTriangle size={14} /> Deploy Failed - Auto Fix</button>
+                            <button onClick={() => setDeploySettingsOpen(true)} className="p-1.5 text-zinc-500 hover:text-zinc-300" title="Settings"><Settings size={14}/></button>
+                        </div>
+                    )}
+                    {deployStatus === 'idle' && (<button onClick={() => setDeploySettingsOpen(true)} className="p-1.5 text-zinc-500 hover:text-zinc-300" title="Deploy Settings"><Settings size={14}/></button>)}
+
+                    <button onClick={injectAIArchitectScaffold} className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-indigo-900/50 hover:bg-indigo-900/20 text-xs font-medium transition-all text-indigo-400 bg-zinc-900 shadow-sm ml-2">
+                        <Cpu size={14} /> Train / Integrate Model
+                    </button>
+
                     <button onClick={() => setIsArtifactSidebarOpen(!isArtifactSidebarOpen)} className={`flex items-center gap-2 px-3 py-1.5 rounded-lg border transition-all text-xs font-medium ml-2 ${isArtifactSidebarOpen || allArtifacts.length > 0 ? 'border-indigo-600/50 bg-indigo-900/20 text-indigo-300 hover:bg-indigo-900/40' : 'border-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>
                        <Library size={14} /> Artifacts ({allArtifacts.length})
                     </button>
+
+                    <button onClick={initiateMerge} className="flex items-center gap-2 px-4 py-1.5 rounded-lg border border-emerald-900/50 hover:bg-emerald-900/20 text-xs font-medium transition-all text-emerald-400 bg-zinc-900 shadow-sm"><GitMerge size={14} /> Merge Request</button>
                   </div>
                 </header>
 
-                <div className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth min-h-0 custom-scrollbar">
+                <div className="flex-1 overflow-y-auto p-6 space-y-6 scroll-smooth min-h-0 custom-scrollbar" onClick={() => setExportMenuOpen(false)}>
                   {switching ? (<div className="flex justify-center mt-20"><Loader2 size={24} className="animate-spin text-indigo-500" /></div>) : messages.length === 0 ? (<div className="text-center mt-20 text-zinc-500">Start typing...</div>) : (
                     messages.filter(m => !(m.role === 'system' && m.content.includes('✅ **Imported'))).map((m, i) => {
                       const displayContent = m.content.replace(/---START_ATTACHMENT:(.*?)---[\s\S]*?---END_ATTACHMENT---/g, '\n\n📎 **Attached Document:** `$1`');
@@ -559,6 +941,9 @@ export default function DialogTreeHome() {
                           <div className="prose prose-invert max-w-none text-[15px] leading-relaxed break-words overflow-hidden">
                               <ReactMarkdown remarkPlugins={[remarkGfm]} components={MarkdownComponents}>{displayContent}</ReactMarkdown>
                           </div>
+                          {m.id && m.id !== 'temp' && m.role !== 'system' && (
+                            <button onClick={() => setForkModal({ isOpen: true, messageId: m.id, name: "", isEphemeral: true })} className={`absolute -bottom-4 ${m.role === 'user' ? '-left-2' : '-right-2'} p-1.5 bg-zinc-800 border border-zinc-700 text-zinc-400 rounded-full opacity-0 group-hover:opacity-100 hover:text-indigo-400 hover:border-indigo-500 transition-all shadow-lg z-10`} title="Branch timeline from this message"><GitFork size={14} /></button>
+                          )}
                         </div>
                       </div>
                     )})
@@ -577,10 +962,16 @@ export default function DialogTreeHome() {
                             <div className="absolute bottom-full left-0 mb-2 w-56 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl py-2 z-50 animate-in fade-in slide-in-from-bottom-2">
                                 <div className="px-3 py-1 text-[10px] font-bold text-zinc-500 uppercase tracking-wider mb-1">AI Reasoning Models</div>
                                 <button onClick={() => { setAiMode('standard'); setAiModeMenuOpen(false); }} className={`w-full text-left px-4 py-2 text-sm flex items-center gap-3 transition-colors ${aiMode === 'standard' ? 'text-white bg-zinc-800' : 'text-zinc-300 hover:bg-zinc-800/50'}`}>
-                                    <Sparkles size={16} className="text-zinc-400" /> <span>Standard</span>
+                                    <Sparkles size={16} className="text-zinc-400" /> <span>Standard <span className="text-[10px] text-zinc-500 block">Fastest generation</span></span>
                                 </button>
                                 <button onClick={() => { setAiMode('deepthink'); setAiModeMenuOpen(false); }} className={`w-full text-left px-4 py-2 text-sm flex items-center gap-3 transition-colors ${aiMode === 'deepthink' ? 'text-white bg-zinc-800' : 'text-zinc-400 hover:text-zinc-300 hover:bg-zinc-800/50'}`}>
-                                    <BrainCircuit size={16} className={aiMode === 'deepthink' ? "text-indigo-400" : "text-zinc-500"} /> <span>DeepThink <span className="text-[10px] text-amber-500/70 border border-amber-500/30 px-1.5 py-0.5 rounded ml-2">BETA</span></span>
+                                    <BrainCircuit size={16} className={aiMode === 'deepthink' ? "text-indigo-400" : "text-zinc-500"} /> <span>DeepThink <span className="text-[10px] text-amber-500/70 border border-amber-500/30 px-1.5 py-0.5 rounded ml-2">BETA</span><span className="text-[10px] text-zinc-500 block">Chain-of-thought loop</span></span>
+                                </button>
+                                <button onClick={() => { setAiMode('orchestrate'); setAiModeMenuOpen(false); }} className={`w-full text-left px-4 py-2 text-sm flex items-center gap-3 transition-colors ${aiMode === 'orchestrate' ? 'text-white bg-zinc-800' : 'text-zinc-400 hover:text-zinc-300 hover:bg-zinc-800/50'}`}>
+                                    <Network size={16} className={aiMode === 'orchestrate' ? "text-indigo-400" : "text-zinc-500"} /> <span>Orchestrator <span className="text-[10px] text-amber-500/70 border border-amber-500/30 px-1.5 py-0.5 rounded ml-2">BETA</span><span className="text-[10px] text-zinc-500 block">Multi-agent delegation</span></span>
+                                </button>
+                                <button onClick={() => { setAiMode('agent'); setAiModeMenuOpen(false); }} className={`w-full text-left px-4 py-2 text-sm flex items-center gap-3 transition-colors ${aiMode === 'agent' ? 'text-white bg-zinc-800' : 'text-zinc-400 hover:text-zinc-300 hover:bg-zinc-800/50'}`}>
+                                    <Bot size={16} className={aiMode === 'agent' ? "text-indigo-400" : "text-zinc-500"} /> <span>Auto-Agent <span className="text-[10px] text-rose-500/70 border border-rose-500/30 px-1.5 py-0.5 rounded ml-2">EXP</span><span className="text-[10px] text-zinc-500 block">Infinite auto-heal loop</span></span>
                                 </button>
                             </div>
                         )}
@@ -590,16 +981,135 @@ export default function DialogTreeHome() {
                     <button onClick={() => fileInputRef.current?.click()} className="p-3.5 bg-zinc-800/50 rounded-2xl text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800 transition-all mb-1"><Paperclip size={20} /></button>
                     
                     <div className="relative flex-1 flex flex-col justify-end min-w-0">
+                      {selectedFiles.length > 0 && (
+                         <div className="flex flex-wrap gap-2 mb-3">
+                            {selectedFiles.map((file, idx) => (
+                              file.type.startsWith('image/') ? (
+                                <div key={idx} className="relative w-16 h-16 rounded-lg overflow-hidden border border-zinc-700 shadow-md group">
+                                   <img src={file.base64} alt="preview" className="w-full h-full object-cover" />
+                                   <button onClick={() => setSelectedFiles(prev => prev.filter((_, i) => i !== idx))} className="absolute top-1 right-1 bg-black/60 text-zinc-300 hover:text-red-400 p-0.5 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"><X size={12}/></button>
+                                </div>
+                              ) : (
+                                <div key={idx} className="bg-zinc-800 rounded-lg py-1.5 px-3 flex items-center gap-2 border border-zinc-700 shadow-md">
+                                  <File size={14} className="text-indigo-400 shrink-0" />
+                                  <span className="text-xs text-zinc-300 max-w-[120px] truncate">{file.name}</span>
+                                  <button onClick={() => setSelectedFiles(prev => prev.filter((_, i) => i !== idx))} className="text-zinc-500 hover:text-red-400"><X size={14}/></button>
+                                </div>
+                              )
+                            ))}
+                         </div>
+                      )}
                       <textarea value={input} onChange={(e) => setInput(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend(); } }} disabled={switching || !activeBranch} placeholder={`Message #${activeBranch?.name || '...'} (Tip: Use @filename to fetch context)`} className="w-full bg-transparent border-none py-3 px-2 focus:outline-none focus:ring-0 text-[15px] resize-none overflow-y-auto custom-scrollbar" style={{ minHeight: '50px', maxHeight: '200px', height: input ? 'auto' : '50px' }} />
                     </div>
-                    <button onClick={() => handleSend()} disabled={loading || switching || !input.trim()} className="p-3.5 mb-1 bg-indigo-600 rounded-2xl hover:bg-indigo-500 disabled:opacity-50 disabled:bg-zinc-800 transition-all active:scale-95 shrink-0"><Send size={18} className={input.trim() ? "text-white" : "text-zinc-400"} /></button>
+                    <button onClick={() => handleSend()} disabled={loading || switching || (!input.trim() && selectedFiles.length === 0)} className="p-3.5 mb-1 bg-indigo-600 rounded-2xl hover:bg-indigo-500 disabled:opacity-50 disabled:bg-zinc-800 transition-all active:scale-95 shrink-0"><Send size={18} className={(input.trim() || selectedFiles.length > 0) ? "text-white" : "text-zinc-400"} /></button>
                   </div>
                 </div>
             </>
         )}
       </main>
 
-      {/* Editor & Preview Sidebars logic remains here but trimmed for context constraints */}
+      {/* Artifact Sidebar */}
+      {isArtifactSidebarOpen && (
+         <aside className="w-72 border-l border-zinc-800 bg-zinc-950/90 backdrop-blur-md flex flex-col shadow-2xl z-20 shrink-0">
+            <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-4 bg-zinc-900/50">
+               <div className="flex items-center gap-2 text-zinc-200 font-semibold text-sm"><Library size={16} className="text-indigo-400" /> Artifact Library</div>
+               <button onClick={() => setIsArtifactSidebarOpen(false)} className="text-zinc-500 hover:text-zinc-300"><X size={16}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 custom-scrollbar">
+               {allArtifacts.length > 0 && (
+                   <button onClick={() => downloadAllArtifacts(allArtifacts, activeBranch?.name || 'export')} className="w-full bg-indigo-600/20 hover:bg-indigo-600/30 text-indigo-400 border border-indigo-600/30 text-xs font-semibold py-2.5 rounded-xl flex items-center justify-center gap-2 transition-all mb-4">
+                       <Cloud size={14} /> Download All as ZIP
+                   </button>
+               )}
+               {allArtifacts.length === 0 ? (
+                  <div className="text-xs text-zinc-600 text-center mt-10 italic">No code generated in this timeline yet.</div>
+               ) : (
+                  allArtifacts.map((art, idx) => (
+                     <div key={idx} className="bg-zinc-900 border border-zinc-800 rounded-xl p-3 hover:border-indigo-500/50 transition-colors group cursor-pointer" onClick={() => { setActiveArtifact({ code: art.code, lang: art.lang, filename: art.filename }); setEditorTab('code'); }}>
+                        <div className="flex items-center justify-between mb-2">
+                           <span className="text-[11px] font-bold text-zinc-300 bg-zinc-950 px-2 py-0.5 rounded border border-zinc-800 truncate max-w-[150px]" title={art.filename}>{art.filename.split('/').pop()}</span>
+                           <div className="flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                              <button onClick={(e) => { e.stopPropagation(); downloadCode(art.code, art.filename); toast.success('Downloaded'); }} className="text-zinc-400 hover:text-zinc-200 text-xs"><Download size={14}/></button>
+                           </div>
+                        </div>
+                        <div className="text-[10px] uppercase font-bold text-indigo-400/70 mb-1.5">{art.lang}</div>
+                        <div className="text-xs text-zinc-400 max-h-32 overflow-hidden font-mono bg-zinc-950 p-2 rounded border border-zinc-800/50 relative">
+                            {art.code}
+                            <div className="absolute inset-x-0 bottom-0 h-10 bg-gradient-to-t from-zinc-950 to-transparent pointer-events-none"></div>
+                        </div>
+                     </div>
+                  ))
+               )}
+            </div>
+         </aside>
+      )}
+
+      {/* Code Editor and Preview Sidebar */}
+      {activeArtifact && (
+        <>
+            <div className="w-1 cursor-col-resize bg-zinc-800 hover:bg-indigo-500 hover:shadow-[0_0_10px_rgba(99,102,241,0.5)] transition-all z-40 active:bg-indigo-400 shrink-0" onMouseDown={startResizing} />
+            <aside style={{ width: `${editorWidth}%` }} className="min-w-[300px] border-l border-zinc-800 bg-[#1e1e1e] flex flex-col shadow-2xl z-30 relative shrink-0 transition-none">
+                <div className="h-16 border-b border-zinc-800 flex items-center justify-between px-6 bg-zinc-900 shrink-0">
+                    <div className="flex items-center gap-4 overflow-hidden pr-4">
+                        <Code size={18} className="text-indigo-400 shrink-0"/>
+                        <span className="text-sm font-semibold text-zinc-200 truncate" title={activeArtifact.filename}>{activeArtifact.filename.split('/').pop()}</span>
+                        
+                        <div className="flex bg-zinc-950 border border-zinc-800 rounded-lg p-0.5 ml-4 shrink-0">
+                            <button onClick={() => setEditorTab('code')} className={`px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors ${editorTab === 'code' ? 'bg-indigo-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}>Code</button>
+                            <button onClick={() => setEditorTab('preview')} className={`flex items-center gap-1 px-3 py-1 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors ${editorTab === 'preview' ? 'bg-emerald-600 text-white' : 'text-zinc-500 hover:text-zinc-300'}`}><Play size={12}/> Preview</button>
+                        </div>
+                        {editorErrors.length > 0 && editorTab === 'code' && (
+                            <button onClick={handleAutoFix} className="ml-4 flex items-center gap-1.5 px-3 py-1 bg-red-900/30 border border-red-700 hover:bg-red-900/50 text-red-400 rounded-md text-[11px] font-bold uppercase tracking-wider transition-colors animate-pulse"><Bug size={12}/> Fix {editorErrors.length}</button>
+                        )}
+                    </div>
+                    <div className="flex gap-2 shrink-0">
+                        <button onClick={() => setGithubModalOpen(true)} className="flex items-center gap-1.5 text-xs bg-white hover:bg-zinc-200 text-black font-semibold px-3 py-1.5 rounded-lg transition-colors"><GitCommit size={14}/> Commit</button>
+                        <button onClick={() => { downloadCode(activeArtifact.code, activeArtifact.filename); toast.success('Downloaded'); }} className="flex items-center gap-1.5 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1.5 rounded-lg transition-colors"><Download size={14}/> D/L</button>
+                        <button onClick={() => setActiveArtifact(null)} className="p-1.5 text-zinc-500 hover:text-zinc-300 rounded-lg hover:bg-zinc-800 transition-colors"><X size={18}/></button>
+                    </div>
+                </div>
+                
+                <div className="flex-1 overflow-hidden relative">
+                    <div className={`absolute inset-0 pt-4 transition-opacity ${editorTab === 'code' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
+                        <Editor
+                            height="100%"
+                            language={activeArtifact.lang === 'html' ? 'html' : activeArtifact.lang === 'css' ? 'css' : activeArtifact.lang === 'python' ? 'python' : activeArtifact.lang.includes('js') ? 'javascript' : activeArtifact.lang.includes('ts') ? 'typescript' : activeArtifact.lang.includes('cpp') ? 'cpp' : 'plaintext'}
+                            theme="vs-dark"
+                            value={activeArtifact.code}
+                            onChange={(val) => setActiveArtifact({ ...activeArtifact, code: val || '' })}
+                            onMount={handleEditorDidMount}
+                            options={{ minimap: { enabled: false }, fontSize: 13, wordWrap: 'on', padding: { top: 16 }, scrollBeyondLastLine: false, smoothScrolling: true }}
+                        />
+                        {editorSelection && (
+                            <div className="absolute bottom-6 right-6 z-50 bg-zinc-900 border border-zinc-700 rounded-xl shadow-2xl p-4 w-80 animate-in fade-in slide-in-from-bottom-4">
+                                <div className="text-xs font-bold text-indigo-400 mb-3 flex items-center gap-1"><Sparkles size={14}/> Copilot: Edit Selection</div>
+                                <textarea value={copilotInput} onChange={e => setCopilotInput(e.target.value)} placeholder="e.g. Refactor this to be asynchronous..." className="w-full bg-zinc-950 border border-zinc-800 rounded-lg p-2.5 text-xs text-white focus:outline-none focus:border-indigo-500 mb-3 resize-none shadow-inner custom-scrollbar" rows={3} autoFocus />
+                                <div className="flex justify-end gap-2">
+                                    <button onClick={() => { setEditorSelection(""); setCopilotInput(""); }} className="text-xs text-zinc-500 hover:text-zinc-300 px-3 py-1.5 font-medium transition-colors">Cancel</button>
+                                    <button onClick={handleCopilotSubmit} disabled={!copilotInput.trim()} className="bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs px-4 py-1.5 rounded-lg flex items-center gap-1.5 font-medium transition-all shadow-md shadow-indigo-900/20"><Send size={12}/> Ask AI</button>
+                                </div>
+                            </div>
+                        )}
+                    </div>
+                    
+                    <div className={`absolute inset-0 bg-[#0d1117] transition-opacity ${editorTab === 'preview' ? 'opacity-100 z-10' : 'opacity-0 z-0 pointer-events-none'}`}>
+                        {editorTab === 'preview' && <PreviewEngine activeArtifact={activeArtifact} allArtifacts={allArtifacts} />}
+                    </div>
+                </div>
+            </aside>
+        </>
+      )}
+      <style dangerouslySetInnerHTML={{ __html: `
+        .custom-scrollbar::-webkit-scrollbar { width: 6px; height: 6px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #3f3f46; border-radius: 10px; }
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover { background: #52525b; }
+        [title]:hover::after {
+          content: attr(title); position: absolute; bottom: 100%; left: 50%; transform: translateX(-50%);
+          background: #18181b; padding: 4px 8px; border-radius: 4px; font-size: 10px; color: #a1a1aa;
+          white-space: nowrap; z-index: 100; border: 1px solid #27272a; margin-bottom: 8px;
+        }
+      `}} />
     </div>
   );
 }
