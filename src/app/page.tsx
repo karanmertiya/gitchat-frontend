@@ -69,6 +69,7 @@ export default function DialogTreeHome() {
   
   const [deployStatus, setDeployStatus] = useState<'idle' | 'building' | 'success' | 'error'>('idle');
   const pollIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const pipelineIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const [pipelineTasks, setPipelineTasks] = useState<{label: string, status: 'pending'|'active'|'done'}[]>([]);
 
   const [importModalOpen, setImportModalOpen] = useState(false);
@@ -144,7 +145,11 @@ export default function DialogTreeHome() {
     setRenderToken(localStorage.getItem('dialogtree_render_token') || "");
     setSupabaseToken(localStorage.getItem('dialogtree_supabase_token') || "");
 
-    return () => { subscription.unsubscribe(); if (pollIntervalRef.current) clearInterval(pollIntervalRef.current); };
+    return () => { 
+        subscription.unsubscribe(); 
+        if (pollIntervalRef.current) clearInterval(pollIntervalRef.current); 
+        if (pipelineIntervalRef.current) clearTimeout(pipelineIntervalRef.current);
+    };
   }, []);
 
   useEffect(() => {
@@ -206,7 +211,7 @@ export default function DialogTreeHome() {
   useEffect(() => {
     if (!workspace) return;
     api.getChitchat(workspace.id).then(res => setChitchatMsgs(res.messages || []));
-    const channel = supabase.channel('room_updates')
+    const channel = supabase.channel(`room_updates_${workspace.id}`)
       .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => {
         if (activeBranch) api.getMessages(activeBranch.id).then(res => setMessages(res.messages || []));
       })
@@ -328,6 +333,8 @@ export default function DialogTreeHome() {
   };
 
   const simulatePipeline = () => {
+      if (pipelineIntervalRef.current) clearTimeout(pipelineIntervalRef.current);
+      
       if (aiMode === 'orchestrate') {
           setPipelineTasks([
               { label: "Agent 1: Architecting solution...", status: 'active' },
@@ -348,9 +355,13 @@ export default function DialogTreeHome() {
           ]);
       }
       
-      setTimeout(() => setPipelineTasks(prev => [{...prev[0], status: 'done'}, {...prev[1], status: 'active'}, prev[2]]), 1500);
-      setTimeout(() => setPipelineTasks(prev => [prev[0], {...prev[1], status: 'done'}, {...prev[2], status: 'active'}]), 3000);
-      setTimeout(() => setPipelineTasks([]), 5000); 
+      pipelineIntervalRef.current = setTimeout(() => {
+          setPipelineTasks(prev => [{...prev[0], status: 'done'}, {...prev[1], status: 'active'}, prev[2]]);
+          pipelineIntervalRef.current = setTimeout(() => {
+              setPipelineTasks(prev => [prev[0], {...prev[1], status: 'done'}, {...prev[2], status: 'active'}]);
+              pipelineIntervalRef.current = setTimeout(() => setPipelineTasks([]), 2000); 
+          }, 1500);
+      }, 1500);
   };
 
   const handleSend = async (overridePrompt?: string) => {
@@ -386,7 +397,7 @@ export default function DialogTreeHome() {
     const lastMsgId = messages.length > 0 ? messages[messages.length - 1].id : null;
     const safeHistory = messages.filter(m => !(m.role === 'system' && m.content.includes('✅ **Imported')));
     
-    setMessages(prev => [...prev, { role: 'user', content: displayPrompt, id: 'temp' }]);
+    setMessages(prev => [...prev, { role: 'user' as const, content: displayPrompt, id: 'temp' }]);
 
     try {
       const data = await api.chat(activeBranch.id, systemInjectedPrompt, lastMsgId, safeHistory, currentAttachments);
@@ -394,7 +405,11 @@ export default function DialogTreeHome() {
     } catch (err: any) {
       setMessages(prev => prev.filter(m => m.id !== 'temp')); 
       toast.error(`AI Engine Error: ${err.message}`);
-    } finally { setLoading(false); setPipelineTasks([]); }
+    } finally { 
+        setLoading(false); 
+        setPipelineTasks([]); 
+        if (pipelineIntervalRef.current) clearTimeout(pipelineIntervalRef.current);
+    }
   };
 
   const handleCopilotSubmit = () => {

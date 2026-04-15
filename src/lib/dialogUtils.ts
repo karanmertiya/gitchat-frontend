@@ -66,7 +66,6 @@ export const extractAllArtifacts = (msgs: any[]) => {
   const allArtifacts: { code: string, lang: string, filename: string, msgIndex: number }[] = [];
   const ticks = ['`', '`', '`'].join('');
   
-  // 🔥 ROCK-SOLID REGEX: Tolerates \r\n, trailing spaces, and grabs meta directly.
   const pattern = ticks + '([a-zA-Z0-9_+-]*)[ \\t\\r]*([^\\n]*)\\n([\\s\\S]*?)' + ticks;
   const regex = new RegExp(pattern, 'g');
 
@@ -80,20 +79,16 @@ export const extractAllArtifacts = (msgs: any[]) => {
            let code = match[3] ? String(match[3]).trim() : '';
            let filename = '';
 
-           // 1. Markdown Metadata (e.g., ```javascript filename="app.js")
            const metaMatch = meta.match(/(?:file|name|filename)=["']?([^"'\s]+)["']?/i);
            if (metaMatch && metaMatch[1]) filename = metaMatch[1];
            
            if (!filename) {
                const firstLine = code.split('\n')[0] || '';
-               
-               // 2. Your exact requested regex
                const nameMatch = firstLine.match(/^(?:\/\/#|\/\/|#|--)\s*(?:filename\s*[:=]\s*)?(.+\.\w+)/i);
                
                if (nameMatch && nameMatch[1]) {
                    filename = nameMatch[1].trim();
                } else {
-                   // 3. Dynamic HTML/CSS Regex (safely built so it doesn't break the chat window!)
                    const htmlC = '<' + '!--';
                    const cssC = '\\/\\*';
                    const webRegex = new RegExp(`^(?:${htmlC}|${cssC})\\s*(?:filename\\s*[:=]\\s*)?([\\w.-]+\\.\\w+)`, 'i');
@@ -103,14 +98,12 @@ export const extractAllArtifacts = (msgs: any[]) => {
                    }
                }
 
-               // Strip the matched comment line from the actual code
                if (filename) {
                    const newlineIndex = code.indexOf('\n');
                    if (newlineIndex !== -1) code = code.substring(newlineIndex + 1).trim();
                }
            }
 
-           // 4. Smart Language Fallbacks
            if (!filename) {
                const ext = lang === 'text' ? 'txt' : lang.replace('javascript', 'js').replace('typescript', 'ts').replace('python', 'py');
                if (lang === 'html' || code.toLowerCase().includes('<!doctype html>') || code.toLowerCase().includes('<html')) {
@@ -133,7 +126,6 @@ export const extractAllArtifacts = (msgs: any[]) => {
      }
   });
 
-  // VIRTUAL FILE SYSTEM DEDUPLICATION
   const latestFiles = new Map<string, any>();
   allArtifacts.forEach(art => {
       latestFiles.set(art.filename, art);
@@ -171,13 +163,14 @@ export const exportPDF = (activeBranch: any, messages: any[], setExportMenuOpen:
 
   const escapedMd = mdContent.replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
+  // 🔥 FIX: Cleaned up malformed Markdown links inside standard HTML src/href tags
   printWindow.document.write(`
       <!DOCTYPE html>
       <html>
       <head>
           <title>Timeline Export: ${activeBranch.name}</title>
-          <link rel="stylesheet" href="[https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-dark.min.css](https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-dark.min.css)">
-          <link rel="stylesheet" href="[https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css](https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css)">
+          <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/github-markdown-css/5.2.0/github-markdown-dark.min.css">
+          <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/styles/github-dark.min.css">
           <style>
               @page { margin: 10mm; size: auto; }
               body { padding: 20px; margin: 0; background: #0d1117; color: #c9d1d9; -webkit-print-color-adjust: exact; color-adjust: exact; }
@@ -192,8 +185,8 @@ export const exportPDF = (activeBranch: any, messages: any[], setExportMenuOpen:
           <div class="header">DialogTree Workspace // Branch: ${activeBranch.name} // Generated: ${new Date().toLocaleString()}</div>
           <textarea id="raw-md" style="display:none;">${escapedMd}</textarea>
           <article id="content">Building beautiful PDF... Please wait.</article>
-          <script src="[https://cdn.jsdelivr.net/npm/marked/marked.min.js](https://cdn.jsdelivr.net/npm/marked/marked.min.js)"></script>
-          <script src="[https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js](https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js)"></script>
+          <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+          <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/11.8.0/highlight.min.js"></script>
           <script>
               setTimeout(() => {
                   try {
