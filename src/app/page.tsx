@@ -19,6 +19,7 @@ import PreviewEngine from '@/components/PreviewEngine';
 import MultiplayerCursors from '@/components/MultiplayerCursors';
 import Sidebar from '@/components/Sidebar';
 import FolderTreeItem from '@/components/FolderTree';
+import DataCleaningStudio from '@/components/DataCleaningStudio';
 
 export default function DialogTreeHome() {
   const monaco = useMonaco();
@@ -93,6 +94,13 @@ export default function DialogTreeHome() {
   const [isDiffLoading, setIsDiffLoading] = useState(false);
   const [isArtifactSidebarOpen, setIsArtifactSidebarOpen] = useState(false);
   const [exportMenuOpen, setExportMenuOpen] = useState(false);
+  const [dataCleaningOpen, setDataCleaningOpen] = useState(false);
+
+  const handleInjectCleanedData = (filename: string, content: string) => {
+      const base64Data = `data:text/csv;base64,${btoa(unescape(encodeURIComponent(content)))}`;
+      setSelectedFiles(prev => [...prev, { name: filename, base64: base64Data, type: 'text/csv', ext: 'csv' }]);
+      toast.success('Cleaned dataset attached to context.');
+  };
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -979,6 +987,7 @@ export default function DialogTreeHome() {
 
                     <input type="file" multiple ref={fileInputRef} onChange={handleFileUpload} className="hidden" accept=".txt,.md,.js,.ts,.py,.json,.html,.css,.csv,.pdf,image/*" />
                     <button onClick={() => fileInputRef.current?.click()} className="p-3.5 bg-zinc-800/50 rounded-2xl text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800 transition-all mb-1"><Paperclip size={20} /></button>
+                    <button onClick={() => setDataCleaningOpen(true)} className="p-3.5 bg-zinc-800/50 rounded-2xl text-zinc-400 hover:text-indigo-400 hover:bg-zinc-800 transition-all mb-1" title="Data Cleaning Studio"><Database size={20} /></button>
                     
                     <div className="relative flex-1 flex flex-col justify-end min-w-0">
                       {selectedFiles.length > 0 && (
@@ -1043,6 +1052,12 @@ export default function DialogTreeHome() {
             </div>
          </aside>
       )}
+
+      <DataCleaningStudio 
+          isOpen={dataCleaningOpen} 
+          onClose={() => setDataCleaningOpen(false)} 
+          onInjectCleanedData={handleInjectCleanedData} 
+      />
 
       {/* Code Editor and Preview Sidebar */}
       {activeArtifact && (
